@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live2D QA Harness — 自动参数扫描</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#20242b; overflow:hidden;
+    font-family:-apple-system,'PingFang SC',monospace; }
+  #stage { position:fixed; inset:0; }
+  #hud { position:fixed; top:10px; left:10px; max-width:62vw; z-index:10;
+    background:rgba(0,0,0,.72); color:#9fe8a8; padding:10px 14px; border-radius:8px;
+    font-size:13px; line-height:1.7; pointer-events:none; white-space:pre-wrap; }
+  #hud.err { color:#ff9b9b; }
+  #hud b { color:#fff; }
+  #big { position:fixed; inset:0; display:none; z-index:20; align-items:center;
+    justify-content:center; font-size:64px; font-weight:800; letter-spacing:6px;
+    color:#27ae60; text-shadow:0 4px 24px rgba(0,0,0,.6); pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="hud">QA Harness 初始化中…</div>
+<div id="big">DONE</div>
+
+<script src="../vendor/pixi.min.js"></script>
+<script src="../vendor/live2dcubismcore.min.js"></script>
+<script src="../vendor/pixi-live2d-display.min.js?v=cubism4"></script>
+<script src="../js/qa_harness.js?v=10"></script>
+</body>
+</html>

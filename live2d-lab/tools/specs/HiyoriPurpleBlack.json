@@ -1,0 +1,126 @@
+{
+  "model": "Hiyori",
+  "out": "HiyoriPurpleBlack",
+  "style": "anime schoolgirl with long purple twin-tails hair, wearing a dark violet-black cardigan, deep red pleated skirt, black knee-high socks and a silver ribbon bow, fair skin, blue eyes, elegant dark rose color scheme, official art",
+  "defaults": {
+    "small_comp": 3000,
+    "min_ai_area": 8000
+  },
+  "groups": [
+    {
+      "id": "hair",
+      "texture": 0,
+      "from": {
+        "h": 23,
+        "s": 0.2,
+        "v": 0.5,
+        "tol_h": 15,
+        "tol_s": 0.18,
+        "tol_v": 0.3,
+        "min_area": 2000
+      },
+      "color": {
+        "h": 280,
+        "s": 0.42,
+        "v": 0.48,
+        "prompt": "long purple anime twin-tails hair with soft shading"
+      },
+      "mode": "ai"
+    },
+    {
+      "id": "ribbon",
+      "texture": 0,
+      "from": {
+        "h": 357,
+        "s": 0.5,
+        "v": 0.7,
+        "tol_h": 12,
+        "tol_s": 0.15,
+        "tol_v": 0.3,
+        "min_area": 500
+      },
+      "color": "silver",
+      "mode": "program"
+    },
+    {
+      "id": "eyes",
+      "texture": 0,
+      "from": {
+        "h": 231,
+        "s": 0.27,
+        "v": 0.33,
+        "tol_h": 12,
+        "tol_s": 0.12,
+        "tol_v": 0.18,
+        "min_area": 2000
+      },
+      "color": {
+        "h": 220,
+        "s": 0.5,
+        "v": 0.55
+      },
+      "mode": "program"
+    },
+    {
+      "id": "hair_t1",
+      "texture": 1,
+      "from": {
+        "h": 23,
+        "s": 0.25,
+        "v": 0.4,
+        "tol_h": 15,
+        "tol_s": 0.15,
+        "tol_v": 0.3,
+        "min_area": 2000
+      },
+      "color": {
+        "h": 280,
+        "s": 0.42,
+        "v": 0.48
+      },
+      "mode": "program",
+      "allow_overlap": true
+    },
+    {
+      "id": "cardigan",
+      "texture": 1,
+      "color": {
+        "h": 275,
+        "s": 0.16,
+        "v": 0.24
+      },
+      "prompt": "dark violet-black knitted school cardigan, detailed fabric folds, soft knit texture, visible button placket, cel shading with clear shadow shapes, anime schoolgirl with long purple twin-tails hair, deep red pleated skirt, silver ribbon, elegant dark rose color scheme, official art, high quality",
+      "mode": "ai",
+      "allow_overlap": true,
+      "masks": [
+        1,
+        2,
+        4,
+        10,
+        11,
+        12,
+        17
+      ]
+    },
+    {
+      "id": "skirt",
+      "texture": 1,
+      "from": {
+        "h": 220,
+        "s": 0.2,
+        "v": 0.35,
+        "tol_h": 8,
+        "tol_s": 0.12,
+        "tol_v": 0.2,
+        "min_area": 3000
+      },
+      "color": {
+        "h": 355,
+        "s": 0.55,
+        "v": 0.45
+      },
+      "prompt": "deep red pleated skirt with crisp pleat fold shadows, dark red knee-high socks, purple loafers, detailed fabric texture, cel shading with clear shadow shapes, anime schoolgirl, dark violet-black cardigan, elegant dark rose color scheme, official art, high quality",
+      "mode": "ai"
+    }
+  ]
+}

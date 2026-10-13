@@ -1,0 +1,21 @@
+# QA 运行产物（截图帧、plan、verdict）
+tools/.runs/
+# 第三方依赖（vendor 库等，按需脚本重建）
+tools/third_party/
+# Express4D 真采集数据（gated）；保留目录
+tools/data/express4d/*
+!tools/data/express4d/.gitkeep
+# reskin_ai 中间产物
+tools/.reskin-ai-out/
+# reskin 工作目录（crops/gen/plan/log）
+tools/.reskin-work/
+# 运行时缓存（mask 选区、motion 校准、ComfyUI prompt、reskin 状态）
+tools/.comfy_prompt_id
+tools/.reskin-state.json
+tools/.motion-calib-*.json
+tools/.reskin-ai-*.json
+# Python bytecode
+__pycache__/
+*.pyc
+# 大模型权重
+*.pth

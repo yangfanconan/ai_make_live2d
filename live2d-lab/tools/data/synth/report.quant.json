@@ -1,0 +1,26 @@
+{
+  "synth_blink": {
+    "n": 26,
+    "max_changed_px": 302,
+    "peak_global_frame": "synth_blink_03.png",
+    "max_head_px": 302,
+    "peak_head_frame": "synth_blink_03.png",
+    "first_black": 0.07918571428571429
+  },
+  "synth_open_smile": {
+    "n": 24,
+    "max_changed_px": 222,
+    "peak_global_frame": "synth_open_smile_10.png",
+    "max_head_px": 222,
+    "peak_head_frame": "synth_open_smile_10.png",
+    "first_black": 0.07918571428571429
+  },
+  "synth_turn_brow": {
+    "n": 27,
+    "max_changed_px": 2130,
+    "peak_global_frame": "synth_turn_brow_03.png",
+    "max_head_px": 2130,
+    "peak_head_frame": "synth_turn_brow_03.png",
+    "first_black": 0.07918571428571429
+  }
+}

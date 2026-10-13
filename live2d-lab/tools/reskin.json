@@ -1,0 +1,129 @@
+{
+  "$comment": "Live2D 换肤管线 v2 —— 语义分组配置表。匹配按 groups 顺序执行，先命中先归组；未命中任何组的岛走 defaults。修改风格只需改 style.palette 与各组 prompt。实测结论（2026-10）：强模型（5.0_pro）整图重绘 + reskin.py 表情帧保帧（管线一）效果优于全量分岛精修——分岛丢失全局语境且 26 次独立采样画风不一致。本配置定位为『按需精修』：整图版本某部件穿帮时，仅对该组删除 gen/ 对应文件重跑该组。",
+  "model": "Hiyori",
+  "generator": {
+    "model": "seedream_5.0_pro",
+    "resolution": "2K",
+    "$comment": "生成模型统一在此配置；CLI 可用档见: dreamina-canvas model list --type image（当前含 4.0/4.1/4.5/4.6/4.7/5.0_lite/5.0_pro，5.0_pro 另支持 4K）"
+  },
+  "textureSize": 2048,
+  "styleRef": "说明: i2i 组默认附加整体风格参考图（B 版整图生成结果），保证局部与全局一致",
+  "style": {
+    "name": "银白双马尾 · 红瞳 · 深蓝金水手服",
+    "palette": {
+      "hair": "银白色",
+      "iris": "红色",
+      "skin": "自然白皙肤色",
+      "outfitTop": "深蓝色水手服 + 金色镶边 + 白色衣领",
+      "outfitBottom": "藏青色百褶裙 + 深色过膝袜 + 棕红色皮鞋"
+    }
+  },
+  "groups": [
+    {
+      "id": "expr_frames",
+      "label": "表情帧（眼/眉/口多姿态帧）",
+      "part": ["PartEye", "PartEyeBall", "PartBrow", "PartMouth", "PartCheek"],
+      "match": { "area": [0, 25000] },
+      "render": {
+        "type": "recolor",
+        "rules": "silver_red",
+        "$comment": "表情帧必须保帧换色，禁止 AI 重绘（帧间一致性是硬约束）"
+      }
+    },
+    {
+      "id": "arms",
+      "label": "手臂（UV 旋转存储的竖长条）",
+      "part": ["PartArmA", "PartArmB"],
+      "match": { "area": [25000, 90000], "aspect": [5.5, 15.0], "orient": "vertical" },
+      "render": {
+        "type": "i2i",
+        "rotate": true,
+        "padSquare": true,
+        "ratio": "1:1",
+        "prompt": "平涂动漫风格的少女手臂，水平放置在画布中央，从肩到指尖，白色短袖、深蓝色水手服袖口配金色镶边，自然白皙肤色。保持输入图中手臂的轮廓、姿势、长度和手指形状完全一致，原位重绘，背景纯白。"
+      }
+    },
+    {
+      "id": "hair_side",
+      "label": "侧发/发辫长条",
+      "part": ["PartHairSide"],
+      "match": { "area": [35000, 90000], "aspect": [3.0, 5.5], "orient": "vertical" },
+      "render": {
+        "type": "i2i",
+        "rotate": true,
+        "padSquare": true,
+        "ratio": "1:1",
+        "prompt": "平涂动漫风格的银白色长发发辫，水平放置在画布中央。保持输入图的发丝走向、轮廓和长度完全一致，原位重绘为银白色，背景纯白。"
+      }
+    },
+    {
+      "id": "face",
+      "label": "脸部（含五官底）",
+      "part": ["PartFace", "PartNose", "PartEar", "PartNeck"],
+      "match": { "texture": [0], "area": [100000, 400000], "skinRatioMin": 0.25 },
+      "render": {
+        "type": "i2i",
+        "ratio": "1:1",
+        "prompt": "平涂动漫风格的少女脸部与颈部皮肤，闭着眼没有五官（五官是独立部件）。保持输入图的轮廓、发际线边界与皮肤范围完全一致，原位重绘为白皙肤色，背景纯白。"
+      }
+    },
+    {
+      "id": "hair_main",
+      "label": "前发/后发大块",
+      "part": ["PartHairFront", "PartHairBack"],
+      "match": { "area": [80000, 400000], "topY": [0, 700] },
+      "render": {
+        "type": "i2i",
+        "ratio": "1:1",
+        "prompt": "平涂动漫风格的少女头发（刘海/后发）。保持输入图的发丝分缕、轮廓和大小完全一致，原位重绘为银白色长发，平涂干净，背景纯白。"
+      }
+    },
+    {
+      "id": "body_top",
+      "label": "上半身/躯干",
+      "part": ["PartBody"],
+      "match": { "texture": [0], "area": [400000, 1000000] },
+      "render": {
+        "type": "i2i",
+        "ratio": "3:4",
+        "prompt": "平涂动漫角色的上半身部件（水手服上衣、领口、袖根、腰部、领巾）。保持输入图的轮廓、褶皱位置与形状完全一致，原位重绘为深蓝色水手服配金色镶边、白色衣领、肤色白皙，背景纯白。"
+      }
+    },
+    {
+      "id": "legs",
+      "label": "腿/过膝袜竖条（texture_01）",
+      "part": ["PartBody"],
+      "match": { "texture": [1], "area": [80000, 200000], "aspect": [2.0, 4.0], "orient": "vertical" },
+      "render": {
+        "type": "i2i",
+        "padSquare": true,
+        "ratio": "1:1",
+        "prompt": "平涂动漫角色的腿部部件（大腿皮肤与深色过膝袜），竖直放置在画布中央。保持输入图的轮廓、袜口位置与形状完全一致，原位重绘为自然白皙肤色与深色过膝袜，背景纯白。"
+      }
+    },
+    {
+      "id": "bottom",
+      "label": "裙/袜/鞋（texture_01 大块）",
+      "part": ["PartBody"],
+      "match": { "texture": [1], "area": [25000, 700000] },
+      "render": {
+        "type": "i2i",
+        "ratio": "3:4",
+        "prompt": "平涂动漫角色的下半身衣物部件（百褶裙、过膝袜、皮鞋）。保持输入图的轮廓、褶皱与形状完全一致，原位重绘为藏青色百褶裙、深色过膝袜、棕红色皮鞋，背景纯白。"
+      }
+    }
+  ],
+  "defaults": {
+    "label": "未归组岛（保守处理：保帧换色）",
+    "render": { "type": "recolor", "rules": "silver_red" }
+  },
+  "patchRegions": {
+    "$comment": "单区精修命名区域（tools/reskin_patch.py --name <key>）",
+    "chest": {
+      "texture": 0,
+      "box": [1156, 844, 2032, 1584],
+      "ratio": "4:3",
+      "prompt": "平涂动漫角色上半身的水手服肩部与胸口区域（肩线、袖根衔接、白色衣领、红色领巾、衣襟纽扣）。以输入图为基础原位修正：肩部与胸口的衣纹要自然，袖根与衣身衔接顺滑，保持所有部件的位置、大小与整体配色完全一致（深蓝色水手服、金色镶边、白色衣领），背景纯白。"
+    }
+  }
+}

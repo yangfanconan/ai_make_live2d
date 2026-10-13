@@ -1,0 +1,30 @@
+{
+  "model": "Haru",
+  "out": "HaruWineGold",
+  "defaults": { "small_comp": 3000, "min_ai_area": 8000 },
+  "groups": [
+    {
+      "id": "hair",
+      "texture": 0,
+      "masks": [5, 8, 13, 15],
+      "color": "gold",
+      "mode": "ai"
+    },
+    {
+      "id": "suit",
+      "texture": 1,
+      "from": { "h": 220, "s": 0.19, "v": 0.32, "tol_h": 15, "tol_s": 0.07, "tol_v": 0.38, "min_area": 3000 },
+      "color": { "h": 350, "s": 0.40, "v": 0.32, "prompt": "burgundy wine red school uniform" },
+      "mode": "program",
+      "allow_overlap": true
+    },
+    {
+      "id": "scarf",
+      "texture": 1,
+      "from": { "h": 212, "s": 0.55, "v": 0.60, "tol_h": 25, "tol_s": 0.30, "tol_v": 0.45, "min_area": 800 },
+      "color": "gold",
+      "mode": "program",
+      "allow_overlap": true
+    }
+  ]
+}

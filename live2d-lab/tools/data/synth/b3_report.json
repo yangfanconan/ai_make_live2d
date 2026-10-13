@@ -1,0 +1,49 @@
+{
+  "stage": "B13 合成夹具批量验证",
+  "date": "2026-10-13",
+  "model": "Haru",
+  "pipeline": [
+    "tools/agents/make_synth_takes.py (60fps Live Link Face 表头合成 CSV)",
+    "tools/agents/motion_author.py (自适应表头 → arkit_map → 12Hz 低通 → 钳制 → 30fps motion3)",
+    "tools/agents/motion_deploy.py (motions/auto 落盘 + FileReferences.Motions.Auto 注册)",
+    "tools/agents/qa_director.py --motion (真实 Cubism 播放 + 200ms 截帧 + heuristic)"
+  ],
+  "qa_job": "20261013-145718-Haru-b3batch",
+  "qa_verdict_pass": true,
+  "qa_hard_findings": 0,
+  "console_errors": 0,
+  "scenarios": {
+    "synth_blink": {
+      "csv": "synth_blink.csv (253 行, 4.2s)",
+      "channels": ["ParamEyeLOpen", "ParamEyeROpen"],
+      "frames_captured": 26,
+      "peak_changed_px_head_band": 302,
+      "peak_frame": "synth_blink_03.png",
+      "visual_review": "3 次眨眼，双眼同步闭合到位，无联动穿帮"
+    },
+    "synth_open_smile": {
+      "csv": "synth_open_smile.csv (229 行, 3.8s)",
+      "channels": ["ParamEyeLOpen", "ParamEyeROpen", "ParamEyeLSmile", "ParamEyeRSmile", "ParamMouthOpenY"],
+      "frames_captured": 24,
+      "peak_changed_px_head_band": 222,
+      "peak_frame": "synth_open_smile_10.png",
+      "clip_ratio_warning": {"ParamEyeLSmile": 0.528, "ParamEyeRSmile": 0.528, "ParamMouthOpenY": 0.319},
+      "visual_review": "两轮张嘴清晰，第二轮带笑眯眼；钳制在极值段属预期（合成输入本身顶满）",
+      "model_quirk": "Haru ParamMouthForm def=1=max，正向微笑无参数空间（静态 QA 同款 POSE_AT_DEFAULT），笑只走 EyeXSmile 通道"
+    },
+    "synth_turn_brow": {
+      "csv": "synth_turn_brow.csv (271 行, 4.5s)",
+      "channels": ["ParamAngleX", "ParamAngleY", "ParamBrowLY", "ParamBrowRY"],
+      "frames_captured": 27,
+      "peak_changed_px_head_band": 2130,
+      "peak_frame": "synth_turn_brow_03.png",
+      "visual_review": "左转 25°→回正→右转 25°→点头，yaw 符号经目视校准（yaw+ → AngleX 负 = 屏幕左转），挑眉自然，无肢体联动错误"
+    }
+  },
+  "natural_score_heuristic": "三段均通过活跃通道能量门限（面部 ≥25px / 头身 ≥200px）且无 hard finding；人工目检接触表无撕裂/腔洞/错位",
+  "known_limitations": [
+    "自然度评分目前为 heuristic + 人工目检；JUDGE_CMD 多模态判官接入后替换为自动分数",
+    "motion 截帧为 200ms 异步采样，单帧可能落在过渡中（参数精度验收走 trajectory 确定性模式）",
+    "合成夹具覆盖面部/头部；身体、手势、物理摆动不在视频驱动映射范围内"
+  ]
+}

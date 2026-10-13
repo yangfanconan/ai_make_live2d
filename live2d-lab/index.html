@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live2D Lab · 程序驱动的 2D 角色动画实验台</title>
+<link rel="stylesheet" href="css/panel.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-title">Live2D Lab</div>
+  <div class="topbar-sub">参数驱动 · 程序可控的 2D 角色动画 —— 拖动滑块即是对 Cubism 参数的实时写入</div>
+</header>
+
+<main class="layout">
+  <section class="stage-wrap">
+    <div id="stage"></div>
+    <div id="loading" class="loading">正在加载模型…</div>
+    <div id="toast" class="toast"></div>
+  </section>
+
+  <aside class="panel">
+    <div class="sec">
+      <div class="sec-title">模型</div>
+      <div class="btn-row" id="model-row"></div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">驱动模式</div>
+      <div class="btn-row">
+        <button class="btn mode-btn active" data-mode="auto" id="mode-auto">自动（Idle 动作循环）</button>
+        <button class="btn mode-btn" data-mode="manual" id="mode-manual">手动（滑块直控）</button>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">自动器</div>
+      <label class="switch-row"><input type="checkbox" id="opt-blink" checked><span>自动眨眼</span></label>
+      <label class="switch-row"><input type="checkbox" id="opt-focus" checked><span>视线跟随鼠标</span></label>
+      <label class="switch-row"><input type="checkbox" id="opt-speak"><span>说话模拟（口型正弦驱动）</span></label>
+      <label class="switch-row"><input type="checkbox" id="opt-physics" checked><span>物理（头发 / 身体摆动）</span></label>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">参数面板 <span class="sec-hint" id="param-hint"></span></div>
+      <div id="params"></div>
+      <button class="btn ghost" id="btn-reset">重置参数</button>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">动作</div>
+      <div class="btn-row">
+        <button class="btn" id="btn-idle">播放 Idle</button>
+        <button class="btn" id="btn-tap">TapBody（或点击角色身体）</button>
+      </div>
+    </div>
+
+    <div class="sec" id="sec-exp" style="display:none">
+      <div class="sec-title">表情</div>
+      <div class="btn-row" id="exp-row"></div>
+    </div>
+  </aside>
+</main>
+
+<footer class="statusbar">
+  <span id="st-fps">FPS --</span>
+  <span id="st-model">--</span>
+  <span id="st-hit"></span>
+  <span class="credit">模型素材 © Live2D Inc.（Cubism 官方免费示例，仅限评估/演示用途）· Hiyori-AI 为其贴图风格衍生（tools/reskin.sh 生成）· 运行时：PixiJS 7 + pixi-live2d-display 0.4 + Cubism Core</span>
+</footer>
+
+<script src="vendor/pixi.min.js"></script>
+<script src="vendor/live2dcubismcore.min.js"></script>
+<script src="vendor/pixi-live2d-display.min.js?v=cubism4"></script>
+<script src="js/app.js?v=5"></script>
+</body>
+</html>
