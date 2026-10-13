@@ -2,9 +2,13 @@
 tools/.runs/
 # 第三方依赖（vendor 库等，按需脚本重建）
 tools/third_party/
-# Express4D 真采集数据（gated）；保留目录
-tools/data/express4d/*
-!tools/data/express4d/.gitkeep
+# Express4D 数据与模型权重（gated）；保留目录结构
+tools/data/express4d/raw/*
+!tools/data/express4d/raw/.gitkeep
+tools/data/express4d/processed/*
+!tools/data/express4d/processed/.gitkeep
+tools/data/express4d/models/*
+!tools/data/express4d/models/.gitkeep
 # reskin_ai 中间产物
 tools/.reskin-ai-out/
 # reskin 工作目录（crops/gen/plan/log）
@@ -19,3 +23,4 @@ __pycache__/
 *.pyc
 # 大模型权重
 *.pth
+*.pt
