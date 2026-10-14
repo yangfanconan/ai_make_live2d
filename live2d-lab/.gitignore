@@ -5,6 +5,7 @@ tools/third_party/
 # Express4D 数据与模型权重（gated）；保留目录结构
 tools/data/express4d/raw/*
 !tools/data/express4d/raw/.gitkeep
+tools/data/express4d/arkit/
 tools/data/express4d/processed/*
 !tools/data/express4d/processed/.gitkeep
 tools/data/express4d/models/*

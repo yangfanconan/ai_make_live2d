@@ -26,7 +26,7 @@ from agents.common import TOOLS, log, write_json
 from agents.express4d.dataset import (
     PairedTakeDataset, split_takes, discover_csvs, N_IN, N_OUT, LIVE2D_PARAMS,
 )
-from agents.express4d.model import Express4DNet, save_model
+from agents.express4d.model import Express4DNet, save_model, load_model
 
 SYNTH_DIR = os.path.join(TOOLS, 'data', 'synth')
 EXPRESS4D_DIR = os.path.join(TOOLS, 'data', 'express4d', 'raw')
@@ -86,6 +86,8 @@ def main():
                     help='关闭通道方差加权（均匀 MSE）')
     ap.add_argument('--out', default=None, help='模型输出路径')
     ap.add_argument('--tag', default='v1', help='模型标签')
+    ap.add_argument('--init', default=None, metavar='CKPT',
+                    help='从 checkpoint 初始化权重后继续训练（微调）')
     ap.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda', 'mps'])
     args = ap.parse_args()
 
@@ -126,8 +128,15 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, drop_last=False)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size) if val_ds else None
 
-    # 模型
+    # 模型（可选从 checkpoint 微调）
     model = Express4DNet(window=args.window).to(device)
+    if args.init:
+        init_model, init_meta = load_model(args.init, device='cpu')
+        assert init_model.window == args.window, \
+            f'checkpoint window={init_model.window} != --window={args.window}'
+        model.load_state_dict(init_model.state_dict())
+        log(f'微调起点: {os.path.basename(args.init)} '
+            f'(epoch={init_meta.get("epoch", "?")}, val={init_meta.get("val_loss", "?")})')
     n_params = sum(p.numel() for p in model.parameters())
     log(f'模型: {n_params:,} 参数 / window={args.window} / in={N_IN} out={N_OUT}')
 
@@ -163,6 +172,7 @@ def main():
                 'train_loss': round(train_loss, 6),
                 'val_loss': round(val_loss, 6),
                 'best': True,
+                'init_from': args.init,
                 'train_csvs': [os.path.basename(p) for p in train_csvs],
                 'val_csvs': [os.path.basename(p) for p in val_csvs],
                 'params': LIVE2D_PARAMS,
@@ -181,6 +191,7 @@ def main():
         'tag': args.tag,
         'window': args.window,
         'epochs': args.epochs,
+        'init_from': args.init,
         'best_val_loss': round(best_val, 6),
         'n_train_takes': len(train_csvs),
         'n_val_takes': len(val_csvs),
