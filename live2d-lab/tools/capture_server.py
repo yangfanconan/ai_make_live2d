@@ -112,7 +112,7 @@ class H(BaseHTTPRequestHandler):
             return
 
         # job 接口
-        m = re.match(r'^/job/([^/]+)/(frame|done|error)$', self.path)
+        m = re.match(r'^/job/([^/]+)/(frame|done|error|mesh)$', self.path)
         if not m:
             self._json(404, {'ok': False, 'error': 'not found'})
             return
@@ -148,6 +148,22 @@ class H(BaseHTTPRequestHandler):
                         _json.dump({'params': body.get('params'),
                                     'readback': body.get('readback')}, mf, ensure_ascii=False)
                 print(f'[job {job}] frame {name} ({len(body["data"])//1024}KB b64)', flush=True)
+                self._json(200, {'ok': True, 'path': path})
+            except Exception as e:
+                self._json(400, {'ok': False, 'error': str(e)})
+            return
+
+        if kind == 'mesh':
+            # keyform 顶点位移 payload（已由前端算好差值并裁掉静止 drawable）
+            try:
+                name = re.sub(r'[^A-Za-z0-9_.-]', '_', body.get('name', 'mesh'))
+                mdir = os.path.join(job_dir, 'mesh')
+                os.makedirs(mdir, exist_ok=True)
+                path = os.path.join(mdir, name + '.json')
+                with open(path, 'w') as f:
+                    json.dump(body, f, ensure_ascii=False)
+                print(f'[job {job}] mesh {name} ({body.get("mesh_total")}/{body.get("drawable_total")} '
+                      f'drawables, max {body.get("max_abs")}px)', flush=True)
                 self._json(200, {'ok': True, 'path': path})
             except Exception as e:
                 self._json(400, {'ok': False, 'error': str(e)})

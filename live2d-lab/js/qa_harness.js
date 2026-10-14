@@ -59,6 +59,7 @@
   let heldParams = null;       // 非 null 时每帧写入（static/trajectory）
   const captured = [];
   const dropped = new Set();
+  const meshDumps = [];
 
   function buildParamTable() {
     const core = model.internalModel.coreModel;
@@ -165,6 +166,144 @@
       log('static: rest2 (warm)');
       await holdPose({}, settleMs);
       await captureFrame('rest2', {});
+    }
+  }
+
+  /* ---------- mesh（keyform 顶点位移 ground-truth 采集） ---------- */
+  // 直接读 Cubism Core 求值后的变形顶点（core Model.drawables.vertexPositions，
+  // 即 csmGetDrawableVertexPositions 的活缓冲），与全默认参数基线之差即该姿势的位移场。
+  // 底层 core Model 实例（pixi CubismModel 把原始 core Model 存在 _model 上）
+  function coreModelObj() {
+    try {
+      const c = model.internalModel.coreModel;
+      return c._model || ((typeof c.getModel === 'function') ? c.getModel() : null);
+    } catch (e) { return null; }
+  }
+
+  // 诊断：确认访问器与画布信息（PixelsPerUnit 为正确的大小写属性名）
+  function meshDiag() {
+    const core = model.internalModel.coreModel;
+    const coreObj = coreModelObj();
+    const dr = coreObj && coreObj.drawables;
+    const ci = coreObj && coreObj.canvasinfo;
+    const out = {
+      wrapperAccessor: typeof core.getDrawableVertexPositions,
+      wrapperUpdate: typeof core.update,
+      coreModel: coreObj ? 'yes' : 'no',
+      drawables: dr ? {
+        count: dr.count,
+        isArray: Array.isArray(dr.vertexPositions),
+        v0len: (dr.vertexPositions && dr.vertexPositions[0] && dr.vertexPositions[0].length) || 0,
+      } : null,
+      canvasinfo: ci ? { Width: ci.Width, Height: ci.Height, PixelsPerUnit: ci.PixelsPerUnit } : null,
+      getDrawableCount: typeof core.getDrawableCount,
+      paramReadback: null, posA: null,
+    };
+    try { out.paramReadback = core.getParameterValueById('ParamAngleX'); } catch (e) {}
+    if (coreObj && dr) out.coreModelKeys = Object.keys(coreObj).slice(0, 16);
+    const head = (p) => (p && p.length) ? Array.prototype.slice.call(p, 0, 4) : null;
+    try { out.posA = head(core.getDrawableVertexPositions(0)); } catch (e) { out.posA = 'err:' + e; }
+    return out;
+  }
+
+  function readDrawables() {
+    const core = model.internalModel.coreModel;
+    const coreObj = coreModelObj();
+    const dr = coreObj && coreObj.drawables;
+    const n = (dr && dr.count) ||
+      ((typeof core.getDrawableCount === 'function') ? core.getDrawableCount() : 0);
+    const ids = (dr && dr.ids) || core._drawableIds || [];
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      let pos = null, src = null;
+      // 主路径：core Drawables 的活缓冲（csmGetDrawableVertexPositions，变形顶点）
+      if (dr && dr.vertexPositions) {
+        try { pos = dr.vertexPositions[i]; src = 'core'; } catch (e) { pos = null; }
+      }
+      if (!pos && typeof core.getDrawableVertexPositions === 'function') {
+        try { pos = core.getDrawableVertexPositions(i); src = 'fw'; } catch (e) { pos = null; }
+      }
+      if (!pos || !pos.length) continue;
+      // 必须拷贝：活缓冲区随 update 变化，持有引用会让 rest 基线一起变（差值恒 0）
+      out.push({ i, id: ids[i] || ('drawable_' + i), pos: new Float32Array(pos), src });
+    }
+    return out;
+  }
+
+  // 核心级单步求值：复位默认 → 写目标参数 → core.update() → 读变形顶点。
+  // 走的是 pixi CubismModel.update()（只调 core 的 updateModel + resetDynamicFlags，
+  // 不含 framework 的 pose/motion/物理），且整段同步执行、无 await 间隙，
+  // 因此后台标签的 rAF 节流不会让 ticker 停摆影响采集。
+  function meshStep(params) {
+    const core = model.internalModel.coreModel;
+    ptable.forEach((p, id) => core.setParameterValueById(id, p.def));
+    for (const [id, v] of Object.entries(params || {})) {
+      const cv = clampv(id, v);
+      if (cv !== null) core.setParameterValueById(id, cv);
+    }
+    core.update();
+    return readDrawables();
+  }
+
+  async function runMesh(poses, settleMs) {
+    const core = model.internalModel.coreModel;
+    releaseDrive();                            // 不让 beforeModelUpdate 钩子抢写参数
+    model.internalModel.motionManager.stopAllMotions();
+    await sleep(settleMs || 300);
+    const rest = meshStep({});                 // 全默认参数基线（已拷贝活缓冲）
+    if (!rest.length) throw new Error('mesh: 无法读回顶点（core Model/drawables 不可达）');
+    const probe = meshDiag();
+    const ci = probe.canvasinfo || {};
+    const oh = model.internalModel.originalHeight || 4500;
+    const ow = model.internalModel.originalWidth || 2400;
+    // 屏幕像素/模型单位 = PixelsPerUnit × 渲染缩放（layoutModel 的 s = RH*0.92/oh）
+    const ppu = ci.PixelsPerUnit || (oh / (ci.Height || 1));
+    const unitPx = ppu * ((RH * 0.92) / oh);
+    // 门限按模型自身尺度取：原生坐标多为 ±1 量级，固定阈值会误杀全部网格
+    let extent = 1e-6;
+    for (const d of rest) for (let j = 0; j < d.pos.length; j++) {
+      const a = Math.abs(d.pos[j]); if (a > extent) extent = a;
+    }
+    const thrN = extent * 1e-4;
+    log(`mesh: 基线 ${rest.length} drawable(src=${rest[0] && rest[0].src}) extent=${extent.toFixed(4)} `
+        + `ppu=${ppu.toFixed(1)} unit_px=${unitPx.toFixed(2)} canvas=${ci.Width}×${ci.Height} `
+        + `probe=${JSON.stringify(probe).slice(0, 240)}`);
+    for (const pose of poses || []) {
+      const cur = meshStep(pose.params);       // 同步：写参 → core.update → 读顶点
+      const rb = {};
+      for (const id of Object.keys(pose.params || {})) {
+        try { rb[id] = core.getParameterValueById(id); } catch (e) { rb[id] = null; }
+      }
+      const deltas = [];
+      let maxAbs = 0;
+      for (let k = 0; k < rest.length && k < cur.length; k++) {
+        const r = rest[k], c = cur[k];
+        if (r.pos.length !== c.pos.length) continue;
+        const d = new Array(c.pos.length);
+        let mx = 0;
+        for (let j = 0; j < c.pos.length; j++) {
+          const dv = c.pos[j] - r.pos[j];
+          d[j] = Math.round(dv * 1e6) / 1e6;
+          const a = Math.abs(dv);
+          if (a > mx) mx = a;
+        }
+        if (mx < thrN) continue;                // 数值死网格丢弃
+        if (mx > maxAbs) maxAbs = mx;
+        deltas.push({ i: c.i, id: c.id, n: c.pos.length / 2, max: +mx.toFixed(6), d });
+      }
+      await postJSON(`/job/${JOB}/mesh`, {
+        name: pose.name, params: pose.params, readback: rb,
+        drawable_total: rest.length, mesh_total: deltas.length, src: rest[0] && rest[0].src,
+        max_abs_native: +maxAbs.toFixed(6), max_abs_px: +(maxAbs * unitPx).toFixed(2),
+        extent, unit_px: unitPx, pixels_per_unit: ppu,
+        canvas: { w: ci.Width, h: ci.Height }, original_width: ow, original_height: oh,
+        thr_native: thrN,
+        probe: (meshDumps.length === 0 ? probe : null),
+        drawables: deltas,
+      }, 3);
+      meshDumps.push(pose.name);
+      log(`mesh: ${pose.name} → ${deltas.length}/${rest.length} drawable，`
+          + `最大位移 ${(maxAbs * unitPx).toFixed(2)}px（原生 ${maxAbs.toFixed(5)}）`);
     }
   }
 
@@ -293,9 +432,13 @@
     heldParams = {};
     await sleep(800);
 
-    if (plan.mode === 'static' || plan.poses) await runStatic(plan.poses, settle);
-    if (plan.expressions !== false && plan.mode !== 'trajectory' && plan.mode !== 'motion') {
-      await runExpressions(settle);
+    if (plan.mode === 'mesh') {
+      await runMesh(plan.poses, settle);
+    } else {
+      if (plan.mode === 'static' || plan.poses) await runStatic(plan.poses, settle);
+      if (plan.expressions !== false && plan.mode !== 'trajectory' && plan.mode !== 'motion') {
+        await runExpressions(settle);
+      }
     }
     for (const tr of plan.trajectories || []) await runTrajectory(tr, settle);
     for (const m of plan.motions || []) await runMotion(m, settle);
@@ -304,6 +447,7 @@
       { id, min: p.min, max: p.max, def: p.def }));
     await postJSON(`/job/${JOB}/done`, {
       frames: captured,
+      meshes: meshDumps,
       manifest: {
         runtime_params: runtimeParams,
         dropped_params: [...dropped],

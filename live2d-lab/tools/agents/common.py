@@ -103,6 +103,18 @@ def open_browser(url):
     subprocess.Popen(['open', url])
 
 
+def open_harness(url):
+    """在 Chrome 打开 harness 页（非阻塞）。
+
+    用 `open -a "Google Chrome"`：既让 Chrome 上前台（避免手动切页），又不像
+    osascript 那样阻塞等待 Automation 授权（实测会挂住整个采集脚本）。
+    mesh 采集走同步 core 级求值、不依赖 rAF ticker，标签即便在后台也能完成，
+    因此这里不做旧标签清理（多开无害，各自拉自己的 job）。
+    """
+    subprocess.Popen(['open', '-a', 'Google Chrome', url])
+    log('唤起浏览器(Chrome): ' + url)
+
+
 def verdict_path(job_dir):
     return os.path.join(job_dir, 'verdict.json')
 

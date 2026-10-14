@@ -28,3 +28,4 @@ __pycache__/
 *.pth
 *.pt
 tools/data/poses/
+tools/data/keyforms/
