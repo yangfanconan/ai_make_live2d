@@ -66,6 +66,16 @@ def build_plan(model, args, rel_model_url):
     }
     if not args.no_static:
         plan['poses'] = [{'name': n, 'params': p} for n, p in DEFAULT_POSES]
+    if args.poses:
+        poses = C.read_json(args.poses)
+        assert isinstance(poses, list) and poses and 'params' in poses[0], \
+            '姿势库格式应为 [{name, params:{ParamX: v}}]'
+        # 判定器以 rest 帧为黑帧检测基线，姿势库没有时自动补
+        if not any(p['name'] == 'rest' for p in poses):
+            rest = next(p for n, p in DEFAULT_POSES if n == 'rest')
+            poses = [{'name': 'rest', 'params': rest}] + poses
+        plan['poses'] = poses
+        C.log(f'关键姿势库: {len(poses)} 个姿势 ← {args.poses}')
     if not args.no_expr and not args.no_static:
         plan['expressions'] = True
     for tp in args.trajectory or []:
@@ -172,6 +182,8 @@ def main():
     ap.add_argument('--physics', action='store_true', help='保留物理（默认关，保证确定性）')
     ap.add_argument('--trajectory', action='append', help='trajectory.json，可重复')
     ap.add_argument('--motion', action='append', help='Group:index[:name[:dur]]，可重复')
+    ap.add_argument('--poses', metavar='POSES_JSON',
+                    help='keyframe_extract 产出的关键姿势库，替代默认静态姿势表')
     ap.add_argument('--load-wait-ms', type=int, default=5000)
     ap.add_argument('--settle-ms', type=int, default=600)
     ap.add_argument('--timeout', type=int, default=240)

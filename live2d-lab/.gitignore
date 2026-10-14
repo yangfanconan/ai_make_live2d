@@ -27,3 +27,4 @@ __pycache__/
 # 大模型权重
 *.pth
 *.pt
+tools/data/poses/
