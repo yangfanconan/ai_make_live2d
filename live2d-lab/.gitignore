@@ -9,6 +9,9 @@ tools/data/express4d/processed/*
 !tools/data/express4d/processed/.gitkeep
 tools/data/express4d/models/*
 !tools/data/express4d/models/.gitkeep
+# 随机增强合成数据与推理产物（脚本可重建）
+tools/data/synth/aug/
+tools/data/out/
 # reskin_ai 中间产物
 tools/.reskin-ai-out/
 # reskin 工作目录（crops/gen/plan/log）

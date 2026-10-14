@@ -167,12 +167,15 @@ def split_takes(csv_paths, val_ratio=0.2, seed=42):
 
 
 def discover_csvs(synth_dir=None, express4d_dir=None):
-    """自动发现合成夹具和真机 CSV"""
+    """自动发现合成夹具（含 aug/ 子目录）和真机 CSV"""
     paths = []
-    if synth_dir:
-        for f in sorted(os.listdir(synth_dir)) if os.path.isdir(synth_dir) else []:
-            if f.endswith('.csv'):
-                paths.append(os.path.join(synth_dir, f))
+    if synth_dir and os.path.isdir(synth_dir):
+        for root, _dirs, files in sorted(os.walk(synth_dir)):
+            if '__pycache__' in root:
+                continue
+            for f in sorted(files):
+                if f.endswith('.csv'):
+                    paths.append(os.path.join(root, f))
     if express4d_dir and os.path.isdir(express4d_dir):
         for d in sorted(os.listdir(express4d_dir)):
             dp = os.path.join(express4d_dir, d)

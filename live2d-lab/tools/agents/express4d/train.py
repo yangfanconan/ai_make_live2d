@@ -40,14 +40,17 @@ def smooth_loss(pred):
     return torch.mean(torch.abs(pred[1:] - pred[:-1]))
 
 
-def train_epoch(model, loader, optimizer, device, lam_smooth=0.01):
+def train_epoch(model, loader, optimizer, device, weight=None):
+    """weight: (N_OUT,) 通道权重向量（None = 均匀）"""
     model.train()
     total, n = 0.0, 0
     for x, y in loader:
         x, y = x.to(device), y.to(device)
         pred = model(x)
-        # 训练阶段纯 MSE；时序平滑由 forward_seq 的 1D 因果卷积在推理时实现
-        loss = nn.functional.mse_loss(pred, y)
+        if weight is not None:
+            loss = (((pred - y) ** 2) * weight).mean()
+        else:
+            loss = nn.functional.mse_loss(pred, y)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -79,6 +82,8 @@ def main():
     ap.add_argument('--batch-size', type=int, default=64)
     ap.add_argument('--lr', type=float, default=1e-3)
     ap.add_argument('--val-ratio', type=float, default=0.2)
+    ap.add_argument('--no-chan-weight', action='store_true',
+                    help='关闭通道方差加权（均匀 MSE）')
     ap.add_argument('--out', default=None, help='模型输出路径')
     ap.add_argument('--tag', default='v1', help='模型标签')
     ap.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda', 'mps'])
@@ -129,13 +134,24 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
+    # 通道权重：按训练集各通道方差加权（活跃通道权重高，恒定通道不再淹没损失）
+    weight = None
+    if not args.no_chan_weight:
+        all_tgt = np.concatenate([tgt for _, tgt, _ in train_ds.takes], axis=0)
+        std = all_tgt.std(axis=0)  # (N_OUT,)
+        raw = std + 0.02  # 基础权重：恒定通道也留一点
+        weight = torch.tensor(raw / raw.mean(), dtype=torch.float32, device=device)
+        top = sorted(zip(LIVE2D_PARAMS, weight.tolist()),
+                     key=lambda kv: -kv[1])[:5]
+        log('通道权重 top5: ' + ', '.join(f'{p}={w:.2f}' for p, w in top))
+
     # 训练
     best_val = float('inf')
     out_path = args.out or os.path.join(MODELS_DIR, f'express4d_{args.tag}.pt')
 
     for ep in range(1, args.epochs + 1):
         t0 = time.time()
-        train_loss = train_epoch(model, train_loader, optimizer, device)
+        train_loss = train_epoch(model, train_loader, optimizer, device, weight)
         val_loss = eval_epoch(model, val_loader, device) if val_loader else 0.0
         scheduler.step()
         dt = time.time() - t0
