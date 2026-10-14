@@ -1,0 +1,41 @@
+{
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "HaruGrowRig.moc3",
+    "Textures": [
+      "../Haru/Haru.2048/texture_00.png",
+      "../Haru/Haru.2048/texture_01.png"
+    ],
+    "Physics": "../Haru/Haru.physics3.json",
+    "Pose": "../Haru/Haru.pose3.json",
+    "DisplayInfo": "../Haru/Haru.cdi3.json",
+    "Expressions": [
+      { "Name": "F01", "File": "../Haru/expressions/F01.exp3.json" },
+      { "Name": "F02", "File": "../Haru/expressions/F02.exp3.json" },
+      { "Name": "F03", "File": "../Haru/expressions/F03.exp3.json" },
+      { "Name": "F04", "File": "../Haru/expressions/F04.exp3.json" },
+      { "Name": "F05", "File": "../Haru/expressions/F05.exp3.json" },
+      { "Name": "F06", "File": "../Haru/expressions/F06.exp3.json" },
+      { "Name": "F07", "File": "../Haru/expressions/F07.exp3.json" },
+      { "Name": "F08", "File": "../Haru/expressions/F08.exp3.json" }
+    ],
+    "UserData": "Haru.userdata3.json"
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": ["ParamEyeLOpen", "ParamEyeROpen"]
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": ["ParamMouthOpenY"]
+    }
+  ],
+  "HitAreas": [
+    { "Id": "HitArea", "Name": "Head" },
+    { "Id": "HitArea2", "Name": "Body" }
+  ],
+  "Name": "HaruGrowRig"
+}
