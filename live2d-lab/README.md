@@ -20,13 +20,13 @@ Live2D Lab 是一套围绕 [Cubism SDK](https://www.live2d.com/) 的工程化实
 
 技术路线分三级递进：
 
-| 级别 | 方案 | 周期 | 效果 |
-|------|------|------|------|
-| **L1 几何映射** | ARKit BlendShapes → Live2D 参数规则映射 | 1 周 | 60–70% 自然度 |
-| **L2 小模型** | 自监督配对数据训练 MLP/Transformer | 2–3 周 | 80% 自然度 |
-| **L3 多模态** | VLM 理解文本/视频语义直接生成关键姿势 | 1–2 月 | 商用级 |
+| 级别 | 方案 | 周期 | 落地状态 | 效果 |
+|------|------|------|----------|------|
+| **L1 几何映射** | ARKit BlendShapes → Live2D 参数规则映射 | 1 周 | ✅ 完成 | 60–70% 自然度 |
+| **L2 小模型** | 自监督配对数据训练 MLP（回放混合微调） | 2–3 周 | ✅ v5 落地 | 真实域 22× 改善，合成域保持 |
+| **L3 多模态** | 文本描述 → TF-IDF + MLP → 61 维 ARKit | 1–2 月 | ✅ v1 落地 | val MAE 0.052 vs mean 基线 0.063；brow +34% / mouth +19% |
 
-> 当前实现已覆盖 **L1 几何映射** 的端到端管线，含 QA 验收闭环。
+> 当前实现已覆盖 **L1 → L2 → L3 全链路**：L3 文本/剧本生成关键姿势 → L2 express4d 解码到 Live2D → motion3 部署 → QA 验收闭环。
 
 ---
 
@@ -35,11 +35,17 @@ Live2D Lab 是一套围绕 [Cubism SDK](https://www.live2d.com/) 的工程化实
 ### 总体数据流
 
 ```
-真人视频 / 合成夹具
+真人视频 / 合成夹具 / L3 文本关键帧
     │
     ▼ ARKit BlendShapes (52 BS + 头部欧拉角)
 ┌───────────────────────────┐
-│  arkit_map.py             │  ← 标准语义空间 → 模型实测量程分段缩放
+│  text2pose / express4d    │  ← L3: TF-IDF(20k) + MLP(10.4M) → 61维 → bridge 31维
+│  (MLP 解码层 v5)          │  ← L2: 15 帧滑窗 MLP → canonical 18 维，通道方差加权 MSE
+└───────────┬───────────────┘
+            │
+            ▼ fit_to_model（标准语义空间 → 模型实测量程分段缩放）
+┌───────────────────────────┐
+│  arkit_map.py             │  ← 以默认值为锚点双向缩放
 │  motion_author.py         │  ← 12Hz 低通 → 钳制 → 30fps motion3
 └───────────┬───────────────┘
             │ motion3.json
@@ -118,9 +124,28 @@ live2d-lab/
 │   │   ├── motion_author.py      # CSV → 低通/钳制/重采样 → motion3.json
 │   │   ├── motion_deploy.py      # motion3 落盘 + model3.json Auto 组幂等注册
 │   │   ├── make_synth_takes.py   # 合成 ARKit 夹具（blink/open_smile/turn_brow）
+│   │   ├── keyframe_extract.py   # CSV → 低通 → 事件段 → 关键姿势库
+│   │   ├── moc3_auto_rig.py      # moc3 自动绑骨（结构增长 + A/B 验证）
 │   │   ├── qa_director.py        # QA Director（plan → 截帧 → 判定 → verdict）
 │   │   ├── judges.py             # heuristic 判定 + contact sheet + JUDGE_CMD 协议
 │   │   ├── common.py             # 共享基础设施（路径/服务/verdict IO）
+│   │   │
+│   │   ├── express4d/            # L2 小模型管线（ARKit → Live2D 解码层）
+│   │   │   ├── dataset.py        #   31 维输入 + 18 维 canonical 输出 / 滑窗 Dataset
+│   │   │   ├── model.py          #   Express4DNet MLP（158k 参数 / 15 帧滑窗）
+│   │   │   ├── train.py          #   训练 + 通道方差加权 + mean 基线对比
+│   │   │   ├── infer.py          #   CSV → 滑窗推理 → motion3.json
+│   │   │   ├── evaluate.py       #   评估脚本
+│   │   │   └── arkit_ingest.py   #   KeyframeFace → 本项目 L2 CSV 适配器
+│   │   │
+│   │   ├── text2pose/            # L3 多模态管线（文本 → 61 维 ARKit）
+│   │   │   ├── dataset_t2p.py    #   KeyframeFace ARKit_semantic jsonl → TF-IDF(20k)
+│   │   │   ├── model_t2p.py      #   Text2PoseNet（sig×52 + tanh×9 有界输出）
+│   │   │   ├── train_t2p.py      #   MLP(10.4M) + mean 基线 + 分组 MAE 报告
+│   │   │   ├── bridge.py         #   61 维 → 31 特征（头部弧度标定 funnel/pucker 拆分）
+│   │   │   ├── infer_t2p.py      #   单条文本 → 61 维 / 31 特征
+│   │   │   └── script2motion.py  #   剧本关键帧 → 余弦缓动 CSV → v5 → motion3.json
+│   │   │
 │   │   └── rubrics/qa_rubric.md  # 多模态判官评分 rubric
 │   │
 │   ├── capture_server.py         # 线程化截帧服务器（/shot + /job 端点）
@@ -199,6 +224,50 @@ python3 tools/agents/motion_deploy.py \
 
 # 4. QA 自动验收
 python3 tools/agents/qa_director.py --model Haru --motion synth_blink
+```
+
+### L2 express4d 训练 & 推理
+
+```bash
+# KeyframeFace 开源 ARKit 数据接入（CC-BY-NC-4.0，本地训练用）
+python3 tools/agents/express4d/arkit_ingest.py \
+    --src "tools/data/express4d/raw/keyframeface/extracted/KeyframeFace Dataset/raw_data" \
+    --subjects 8 --per-subject 12
+
+# 训练 v5（回放混合微调，合成夹具 + 真机 CSV 混合）
+python3 tools/agents/express4d/train.py \
+    --synth --express4d \
+    --init tools/data/express4d/models/express4d_v4.pt \
+    --tag v5 --epochs 200
+
+# CSV → motion3.json（使用 v5 模型）
+python3 tools/agents/express4d/infer.py \
+    --csv tools/data/out/take.csv \
+    --model Haru \
+    --ckpt tools/data/express4d/models/express4d_v5.pt \
+    --out tools/data/out/take.motion3.json
+```
+
+### L3 文本 → motion3 全链路
+
+```bash
+# 训练（KeyframeFace ARKit_semantic jsonl）
+python3 tools/agents/text2pose/train_t2p.py --tag v1 --epochs 300
+
+# 单条文本推理（看 61 维 / 31 特征输出）
+python3 tools/agents/text2pose/infer_t2p.py \
+    --text "A wide joyful smile, eyes squinting with happiness, brows raised high."
+
+# 剧本驱动（Script.csv 关键帧描述 + 帧号）
+python3 tools/agents/text2pose/script2motion.py \
+    --script-id 7 --model Haru --eval
+
+# 自由文本关键帧（时间轴自行指定）
+python3 tools/agents/text2pose/script2motion.py \
+    --kf "a gentle smile with soft eyes@1.5" \
+    --kf "eyes widen in surprise, jaw drops@3.0" \
+    --kf "slowly returns to calm@5.0" \
+    --model Haru
 ```
 
 ### QA 验收
@@ -338,7 +407,8 @@ Haru 已注册 3 个合成动作到 `Auto` 组：
 - **自然度评分**：当前为 heuristic + 人工目检；`JUDGE_CMD` 多模态判官接入后替换为自动分数
 - **动作截帧**：200ms 异步采样，单帧可能落在过渡中（参数精度验收走 trajectory 确定性模式）
 - **覆盖范围**：合成夹具覆盖面部/头部；身体、手势、物理摆动不在视频驱动映射范围内
-- **L2/L3 未实现**：当前仅 L1 几何映射，小模型训练和多模态生成是后续工作
+- **L3 自由短文本分布偏移**：text2pose v1 训练语料是 KeyframeFace 的长描述风格（~300 字），自由短 prompt 会偏向 smile 均值解——后续可引入 sentence-transformers 句向量替代 TF-IDF
+- **L3 头部姿态标定近似**：jsonl 头部值量化到 0.1，逐帧对齐不可行；bridge.py 用分位分布匹配标定（Yaw×1.81 / Pitch×0.95 / Roll×1.14），属近似方案
 - **网络依赖**：AI 换肤需 ComfyUI API 可达；SAM 首次分割需 2.4GB 权重
 
 ---
@@ -349,6 +419,8 @@ Haru 已注册 3 个合成动作到 `Auto` 组：
 |----|------|
 | 渲染 | PixiJS + pixi-live2d-display + Cubism Core |
 | 动作映射 | ARKit BlendShapes / MediaPipe Face Landmarker |
+| L2 小模型 | PyTorch（MLP，MPS 加速）+ 通道方差加权 MSE |
+| L3 多模态 | sklearn TF-IDF(20k, 1-2gram) + PyTorch MLP(10.4M) |
 | AI 换肤 | SAM (ViT-H) + ComfyUI (SD1.5 inpaint) + HSV 程序迁移 |
 | QA 基础设施 | ThreadingHTTPServer + Canvas 离屏截帧 + numpy/PIL heuristic |
 | 前端 | 原生 HTML/CSS/JS（无构建步骤） |
