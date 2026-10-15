@@ -143,3 +143,40 @@ class TfidfFeaturizer:
         f = TfidfFeaturizer.__new__(TfidfFeaturizer)
         f.vec = vec
         return f
+
+
+class SentenceEncoder:
+    """sentence-transformers 句向量（all-MiniLM-L6-v2，384 维 L2 归一化）"""
+
+    MODEL_NAME = 'all-MiniLM-L6-v2'
+
+    def __init__(self, model_name=None):
+        from sentence_transformers import SentenceTransformer
+        self.model = SentenceTransformer(model_name or self.MODEL_NAME)
+
+    def fit(self, texts):
+        """无拟合需求（预训练），返回 self 保持对称接口"""
+        return self
+
+    def transform(self, texts, batch_size=128):
+        return self.model.encode(
+            texts, batch_size=batch_size, convert_to_numpy=True,
+            normalize_embeddings=True, show_progress_bar=False,
+        ).astype(np.float32)
+
+    @property
+    def dim(self):
+        return self.model.get_embedding_dimension()
+
+    def save(self, path):
+        """存 model_name（权重由 HF Hub 管理，不入库）"""
+        with open(path + '.modelname', 'w') as fh:
+            fh.write(self.MODEL_NAME)
+
+    @staticmethod
+    def load(path):
+        p = path if os.path.exists(path) else path + '.modelname'
+        if os.path.exists(p):
+            name = open(p).read().strip()
+            return SentenceEncoder(model_name=name)
+        return SentenceEncoder()

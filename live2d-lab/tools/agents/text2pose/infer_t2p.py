@@ -15,7 +15,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from agents.common import TOOLS, log
 from agents.text2pose.bridge import pose61_to_arkit31, clip01_row
-from agents.text2pose.dataset_t2p import PARAM_ORDER, TfidfFeaturizer
+from agents.text2pose.dataset_t2p import PARAM_ORDER, TfidfFeaturizer, SentenceEncoder
 from agents.text2pose.model_t2p import load_model
 
 MODELS_DIR = os.path.join(TOOLS, 'data', 'express4d', 'models')
@@ -28,10 +28,17 @@ class Text2Pose:
         self.net, self.meta = load_model(ckpt_path, device=device)
         self.net.eval()
         self.device = device
-        tfidf_path = os.path.join(
-            os.path.dirname(ckpt_path),
-            self.meta.get('tfidf', os.path.basename(ckpt_path).replace('.pt', '_tfidf.pkl')))
-        self.feat = TfidfFeaturizer.load(tfidf_path)
+        enc_tag = self.meta.get('encoder', 'tfidf')
+        base = os.path.dirname(ckpt_path)
+        enc_path = os.path.join(base, self.meta.get('enc_path',
+                                                    os.path.basename(ckpt_path).replace('.pt', '_encoder')))
+        if enc_tag == 'sbert':
+            self.feat = SentenceEncoder.load(enc_path)
+        else:
+            # 兼容旧 meta（含 tfidf 字段）
+            old = self.meta.get('tfidf')
+            p = os.path.join(base, old) if old else enc_path + '.pkl'
+            self.feat = TfidfFeaturizer.load(p if os.path.exists(p) else enc_path + '.pkl')
 
     def predict(self, text):
         """文本 → dict(61 维, jsonl 空间)"""

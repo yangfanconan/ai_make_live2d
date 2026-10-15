@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from agents.common import TOOLS, log, write_json
 from agents.text2pose.dataset_t2p import (
     TRAIN_JSONL, VAL_JSONL, PARAM_ORDER, N_OUT, TfidfFeaturizer,
-    load_records, group_indices,
+    SentenceEncoder, load_records, group_indices,
 )
 from agents.text2pose.model_t2p import Text2PoseNet, save_model
 
@@ -47,6 +47,8 @@ def main():
     ap = argparse.ArgumentParser(description='Text2Pose L3 训练')
     ap.add_argument('--train-jsonl', default=TRAIN_JSONL)
     ap.add_argument('--val-jsonl', default=VAL_JSONL)
+    ap.add_argument('--encoder', choices=['tfidf', 'sbert'], default='tfidf',
+                    help='文本编码器：TF-IDF / all-MiniLM-L6-v2 句向量')
     ap.add_argument('--max-features', type=int, default=20000)
     ap.add_argument('--epochs', type=int, default=300)
     ap.add_argument('--batch-size', type=int, default=64)
@@ -68,13 +70,18 @@ def main():
     val_recs = load_records(args.val_jsonl)
     log(f'数据: train={len(train_recs)} / val={len(val_recs)}')
 
-    feat = TfidfFeaturizer(max_features=args.max_features)
-    feat.fit([r['text'] for r in train_recs])
+    if args.encoder == 'sbert':
+        feat = SentenceEncoder()
+        feat.fit([])  # 预训练模型 fit 是 no-op
+        enc_tag = 'SBERT(all-MiniLM-L6-v2)'
+    else:
+        feat = TfidfFeaturizer(max_features=args.max_features)
+        enc_tag = f'TF-IDF({args.max_features})'
     x_train = feat.transform([r['text'] for r in train_recs])
     x_val = feat.transform([r['text'] for r in val_recs])
     y_train = np.stack([r['target'] for r in train_recs])
     y_val = np.stack([r['target'] for r in val_recs])
-    log(f'TF-IDF 维度: {feat.dim}')
+    log(f'{enc_tag} 维度: {feat.dim}')
 
     # mean 基线
     mean_pred = y_train.mean(axis=0, keepdims=True)
@@ -102,7 +109,7 @@ def main():
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
 
     out_path = os.path.join(MODELS_DIR, f'text2pose_{args.tag}.pt')
-    tfidf_path = os.path.join(MODELS_DIR, f'text2pose_{args.tag}_tfidf.pkl')
+    enc_path = os.path.join(MODELS_DIR, f'text2pose_{args.tag}_encoder')
     best_val = float('inf')
     best_state = None
     for ep in range(1, args.epochs + 1):
@@ -129,11 +136,10 @@ def main():
             save_model(model, out_path, {
                 'epoch': ep, 'train_loss': round(tot / n, 6),
                 'val_mse': round(val_mse, 6), 'val_mae': round(val_mae, 6),
-                'tfidf': os.path.basename(tfidf_path),
-                'max_features': args.max_features,
+                'encoder': args.encoder, 'enc_path': os.path.basename(enc_path),
                 'param_order': PARAM_ORDER,
             })
-            feat.save(tfidf_path)
+            feat.save(enc_path)
         if ep % 25 == 0 or ep == 1 or ep == args.epochs:
             log(f'  ep {ep:4d}/{args.epochs}  train={tot / n:.6f}  '
                 f'val_mse={val_mse:.6f}  val_mae={val_mae:.6f}  '
@@ -159,9 +165,10 @@ def main():
     rep_path = os.path.join(MODELS_DIR, f'text2pose_{args.tag}_report.json')
     write_json(rep_path, {
         'model_path': os.path.abspath(out_path),
-        'tfidf_path': os.path.abspath(tfidf_path),
+        'enc_path': os.path.abspath(enc_path),
+        'encoder': args.encoder, 'enc_tag': enc_tag,
         'tag': args.tag, 'epochs': args.epochs, 'n_params': n_params,
-        'tfidf_dim': feat.dim, 'max_features': args.max_features,
+        'encoder_dim': feat.dim, 'max_features': args.max_features,
         'n_train': len(train_recs), 'n_val': len(val_recs),
         'best_val_mse': round(best_val, 6), 'val_mae': round(val_mae, 6),
         'baseline': {'val_mse': round(base_mse, 6), 'val_mae': round(base_mae, 6)},
