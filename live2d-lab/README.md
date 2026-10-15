@@ -25,8 +25,10 @@ Live2D Lab 是一套围绕 [Cubism SDK](https://www.live2d.com/) 的工程化实
 | **L1 几何映射** | ARKit BlendShapes → Live2D 参数规则映射 | 1 周 | ✅ 完成 | 60–70% 自然度 |
 | **L2 小模型** | 自监督配对数据训练 MLP（回放混合微调） | 2–3 周 | ✅ v5 落地 | 真实域 22× 改善，合成域保持 |
 | **L3 多模态** | 文本描述 → TF-IDF + MLP → 61 维 ARKit | 1–2 月 | ✅ v1 落地 | val MAE 0.052 vs mean 基线 0.063；brow +34% / mouth +19% |
+| **身体驱动（并行轨）** | 视频 → DWPose 点位 → L1 几何规则 → 13 通道 | 1 周 | ✅ v1 落地 | CoreML 4.4× 加速；躯干/头部/手臂/手腕全覆盖 |
 
-> 当前实现已覆盖 **L1 → L2 → L3 全链路**：L3 文本/剧本生成关键姿势 → L2 express4d 解码到 Live2D → motion3 部署 → QA 验收闭环。
+> 当前实现已覆盖 **L1 → L2 → L3 全链路 + 身体驱动并行轨**：L3 文本/剧本生成关键姿势 →
+> L2 express4d 解码到 Live2D；DWPose 视频点位驱动躯干/手臂；motion3 统一部署 → QA 验收闭环。
 
 ---
 
@@ -35,20 +37,22 @@ Live2D Lab 是一套围绕 [Cubism SDK](https://www.live2d.com/) 的工程化实
 ### 总体数据流
 
 ```
-真人视频 / 合成夹具 / L3 文本关键帧
-    │
-    ▼ ARKit BlendShapes (52 BS + 头部欧拉角)
-┌───────────────────────────┐
-│  text2pose / express4d    │  ← L3: TF-IDF(20k) + MLP(10.4M) → 61维 → bridge 31维
-│  (MLP 解码层 v5)          │  ← L2: 15 帧滑窗 MLP → canonical 18 维，通道方差加权 MSE
-└───────────┬───────────────┘
-            │
-            ▼ fit_to_model（标准语义空间 → 模型实测量程分段缩放）
-┌───────────────────────────┐
-│  arkit_map.py             │  ← 以默认值为锚点双向缩放
+真人视频 / 合成夹具 / L3 文本关键帧          任意含人视频（坐姿/站姿/全身）
+    │                                            │
+    ▼ ARKit BlendShapes (52 BS + 头部欧拉角)      ▼ DWPose 133 点（CoreML 加速）
+┌───────────────────────────┐          ┌───────────────────────────┐
+│  text2pose / express4d    │          │  pose/ingest.py           │
+│  (MLP 解码层 v5)          │          │  (17 身体点 + 42 手点归一化 │
+│  L3: TF-IDF+MLP→61→bridge │          │   CSV，conf 门控+插值)     │
+│  L2: 滑窗 MLP→canonical18 │          │  pose/bodymap.py          │
+└───────────┬───────────────┘          │  (L1 几何→13 通道:躯干/头  │
+            │                          │   /手臂/手腕/呼吸→motion3) │
+            ▼ fit_to_model             └───────────┬───────────────┘
+┌───────────────────────────┐                      │
+│  arkit_map.py             │  ← 以默认值为锚点双向缩放（bodymap 复用）
 │  motion_author.py         │  ← 12Hz 低通 → 钳制 → 30fps motion3
 └───────────┬───────────────┘
-            │ motion3.json
+            │ motion3.json（面部轨 + 身体轨）
             ▼
 ┌───────────────────────────┐
 │  motion_deploy.py         │  ← 落盘 motions/auto + model3.json Auto 组注册
@@ -147,8 +151,10 @@ live2d-lab/
 │   │   │   └── script2motion.py  #   剧本关键帧 → 余弦缓动 CSV → v5 → motion3.json
 │   │   │
 │   │   ├── pose/                 # 身体驱动管线（视频 → DWPose → Live2D 身体参数）
-│   │   │   ├── ingest.py         #   视频 → RTMW 17 身体点归一化 CSV（CoreML 加速）
-│   │   │   └── bodymap.py        #   点位 → BodyAngleX/Y/Z + AngleX/Y/Z + Breath → motion3
+│   │   │   ├── ingest.py         #   视频 → RTMW 17 身体点(+42 手点 --hands)归一化 CSV
+│   │   │   │                     #     CoreML EP 加速 / conf 门控 / 逐列插值 / 多人取最大
+│   │   │   └── bodymap.py        #   点位 → 13 通道 L1 几何（躯干3+头3+臂4+腕2+呼吸1）
+│   │   │                         #     → 低通 → 钳制 → fit_to_model → motion3 + 数值 QA
 │   │   │
 │   │   └── rubrics/qa_rubric.md  # 多模态判官评分 rubric
 │   │
@@ -255,10 +261,10 @@ python3 tools/agents/express4d/infer.py \
 ### 身体驱动（DWPose 视频点位 → Live2D 身体参数）
 
 ```bash
-# 1. 视频 → 17 身体关键点归一化 CSV（CoreML GPU/ANE 加速，conf 门控 + 插值）
-python3 tools/agents/pose/ingest.py --video clip.mp4 --name mytake
+# 1. 视频 → 17 身体点 + 42 手点归一化 CSV（CoreML GPU/ANE 加速，conf 门控 + 插值）
+python3 tools/agents/pose/ingest.py --video clip.mp4 --name mytake --hands
 
-# 2. 点位 → 身体参数 L1 几何规则 → motion3.json（含逐通道数值 QA 报告）
+# 2. 点位 → 13 通道身体参数 L1 几何规则 → motion3.json（含逐通道数值 QA 报告）
 python3 tools/agents/pose/bodymap.py \
     --csv tools/data/poses/mytake.csv --model Haru \
     --out tools/data/out/mytake.body.motion3.json
@@ -268,9 +274,10 @@ python3 tools/agents/motion_deploy.py --model Haru \
     --motion tools/data/out/mytake.body.motion3.json --name body_mytake
 ```
 
-通道：`ParamBodyAngleX/Y/Z`（躯干侧倾/扭转/侧转）+ `ParamAngleX/Y/Z`（头部朝向几何）+
-`ParamBreath`（躯干长度低频代理）。QA 报告输出每通道 min/max/贴量程%/速度 p95，
-极端动作素材（如仰卧起坐）会被正确标记为饱和。
+13 通道：躯干 `ParamBodyAngleX/Y/Z`（侧倾/扭转/侧转）+ 头部 `ParamAngleX/Y/Z`（几何朝向）+
+手臂 `ParamArmLA/RA`（上臂侧举）/`ParamArmLB/RB`（前臂弯曲）+ 手腕 `ParamHandAngleL/R`（±30）+
+`ParamBreath`（躯干长度低频代理）。手部通道单独 4Hz 低通（低分辨率手点噪声大）。
+QA 报告输出每通道 min/max/贴量程%/速度 p95，极端动作素材（如仰卧起坐）会被正确标记饱和。
 
 ### L3 文本 → motion3 全链路
 
@@ -430,10 +437,11 @@ Haru 已注册 3 个合成动作到 `Auto` 组：
 
 - **自然度评分**：当前为 heuristic + 人工目检；`JUDGE_CMD` 多模态判官接入后替换为自动分数
 - **动作截帧**：200ms 异步采样，单帧可能落在过渡中（参数精度验收走 trajectory 确定性模式）
-- **覆盖范围**：合成夹具覆盖面部/头部；身体、手势、物理摆动不在视频驱动映射范围内
-- **L3 自由短文本分布偏移**：text2pose v1 训练语料是 KeyframeFace 的长描述风格（~300 字），自由短 prompt 会偏向 smile 均值解——后续可引入 sentence-transformers 句向量替代 TF-IDF
+- **手指开合未覆盖**：身体管线已覆盖躯干/头部/手臂/手腕；`ParamHandChange`（张合/手型）与物理摆动未做，手指细节需高分辨率素材
+- **身体增益未标定**：L1 几何增益为保守启发式，方向/幅度标定需正常坐姿 VTuber 素材（当前仅仰卧起坐压力测试验证，极端姿态 QA 会正确报饱和）
+- **L3 自由短文本分布偏移**：text2pose v1 训练语料是 KeyframeFace 的长描述风格（~300 字），自由短 prompt 会偏向 smile 均值解；SBERT(all-MiniLM) 句向量方案已实测证伪（全链路退化 2–3×），TF-IDF + 大 MLP 为当前最优，后续可试 domain-adapted 句向量
 - **L3 头部姿态标定近似**：jsonl 头部值量化到 0.1，逐帧对齐不可行；bridge.py 用分位分布匹配标定（Yaw×1.81 / Pitch×0.95 / Roll×1.14），属近似方案
-- **网络依赖**：AI 换肤需 ComfyUI API 可达；SAM 首次分割需 2.4GB 权重
+- **网络依赖**：AI 换肤需 ComfyUI API 可达；SAM 首次分割需 2.4GB 权重；DWPose 首次运行经 download.openmmlab.com 拉模型（~315MB）
 
 ---
 
