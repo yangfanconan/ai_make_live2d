@@ -146,6 +146,10 @@ live2d-lab/
 │   │   │   ├── infer_t2p.py      #   单条文本 → 61 维 / 31 特征
 │   │   │   └── script2motion.py  #   剧本关键帧 → 余弦缓动 CSV → v5 → motion3.json
 │   │   │
+│   │   ├── pose/                 # 身体驱动管线（视频 → DWPose → Live2D 身体参数）
+│   │   │   ├── ingest.py         #   视频 → RTMW 17 身体点归一化 CSV（CoreML 加速）
+│   │   │   └── bodymap.py        #   点位 → BodyAngleX/Y/Z + AngleX/Y/Z + Breath → motion3
+│   │   │
 │   │   └── rubrics/qa_rubric.md  # 多模态判官评分 rubric
 │   │
 │   ├── capture_server.py         # 线程化截帧服务器（/shot + /job 端点）
@@ -247,6 +251,26 @@ python3 tools/agents/express4d/infer.py \
     --ckpt tools/data/express4d/models/express4d_v5.pt \
     --out tools/data/out/take.motion3.json
 ```
+
+### 身体驱动（DWPose 视频点位 → Live2D 身体参数）
+
+```bash
+# 1. 视频 → 17 身体关键点归一化 CSV（CoreML GPU/ANE 加速，conf 门控 + 插值）
+python3 tools/agents/pose/ingest.py --video clip.mp4 --name mytake
+
+# 2. 点位 → 身体参数 L1 几何规则 → motion3.json（含逐通道数值 QA 报告）
+python3 tools/agents/pose/bodymap.py \
+    --csv tools/data/poses/mytake.csv --model Haru \
+    --out tools/data/out/mytake.body.motion3.json
+
+# 3. 部署 + QA 验收（同面部管线）
+python3 tools/agents/motion_deploy.py --model Haru \
+    --motion tools/data/out/mytake.body.motion3.json --name body_mytake
+```
+
+通道：`ParamBodyAngleX/Y/Z`（躯干侧倾/扭转/侧转）+ `ParamAngleX/Y/Z`（头部朝向几何）+
+`ParamBreath`（躯干长度低频代理）。QA 报告输出每通道 min/max/贴量程%/速度 p95，
+极端动作素材（如仰卧起坐）会被正确标记为饱和。
 
 ### L3 文本 → motion3 全链路
 
@@ -421,6 +445,7 @@ Haru 已注册 3 个合成动作到 `Auto` 组：
 | 动作映射 | ARKit BlendShapes / MediaPipe Face Landmarker |
 | L2 小模型 | PyTorch（MLP，MPS 加速）+ 通道方差加权 MSE |
 | L3 多模态 | sklearn TF-IDF(20k, 1-2gram) + PyTorch MLP(10.4M) |
+| 身体驱动 | rtmlib DWPose（YOLOX-m + RTMW-DW 133 点）+ onnxruntime CoreML EP |
 | AI 换肤 | SAM (ViT-H) + ComfyUI (SD1.5 inpaint) + HSV 程序迁移 |
 | QA 基础设施 | ThreadingHTTPServer + Canvas 离屏截帧 + numpy/PIL heuristic |
 | 前端 | 原生 HTML/CSS/JS（无构建步骤） |
