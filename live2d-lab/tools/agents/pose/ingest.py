@@ -56,7 +56,7 @@ def _patch_coreml():
 
 
 def pick_person(kps, scores):
-    """多人时取 bbox 面积最大者；返回 (kp17(17,2) 像素, conf(17,)) 或 None"""
+    """多人时取 bbox 面积最大者；返回 (kp(133,2) 像素, conf(133,)) 或 None"""
     if not len(kps):
         return None
     areas = []
@@ -64,12 +64,13 @@ def pick_person(kps, scores):
         v = k[:17]
         areas.append((v[:, 0].max() - v[:, 0].min()) * (v[:, 1].max() - v[:, 1].min()))
     i = int(np.argmax(areas))
-    return kps[i][:17].copy(), scores[i][:17].copy()
+    return kps[i].copy(), scores[i].copy()
 
 
 def normalize_frame(kp, conf, conf_thr):
     """像素坐标 → 归一化（原点双髋中点/尺度躯干长，y 向上）。
-    返回 (xn(17,), yn(17,), conf(17,))，低置信点为 NaN。"""
+    返回 (xn(133,), yn(133,), conf(133,))，低置信点为 NaN；锚点不可用返回 None。
+    0..16 = COCO 身体；91..132 = 左右手 21 点（与 body17 同锚点/尺度）。"""
     good = conf >= conf_thr
     mh = good[KP['lhip']] and good[KP['rhip']]
     ms = good[KP['lsho']] and good[KP['rsho']]
@@ -119,6 +120,8 @@ def main():
     ap.add_argument('--conf', type=float, default=0.30, help='关键点置信度门控')
     ap.add_argument('--stride', type=int, default=1, help='帧间隔（>1 为降采样）')
     ap.add_argument('--max-frames', type=int, default=0, help='0 = 不限')
+    ap.add_argument('--hands', action='store_true',
+                    help='附带左右手 21 点列（hcL*/hxL*/hyL*/hcR*/hxR*/hyR*）')
     args = ap.parse_args()
 
     name = args.name or os.path.splitext(os.path.basename(args.video))[0]
@@ -168,20 +171,35 @@ def main():
         log(f'有效帧不足（{len(rows_raw)}），检查视频/阈值')
         sys.exit(1)
 
-    X = interp_nans(np.stack([r[0] for r in rows_raw]))  # (T,17)
-    Y = interp_nans(np.stack([r[1] for r in rows_raw]))
-    C = np.stack([r[2] for r in rows_raw])
+    XA = np.stack([r[0] for r in rows_raw])  # (T,133)
+    YA = np.stack([r[1] for r in rows_raw])
+    CA = np.stack([r[2] for r in rows_raw])
     T = len(rows_raw)
+
+    X = interp_nans(XA[:, :17])
+    Y = interp_nans(YA[:, :17])
+    C = CA[:, :17]
+
+    header = (['t'] + [f'c{i}' for i in range(17)]
+              + [f'x{i}' for i in range(17)] + [f'y{i}' for i in range(17)])
+    if args.hands:
+        XL, XR = interp_nans(XA[:, 91:112]), interp_nans(XA[:, 112:133])
+        YL, YR = interp_nans(YA[:, 91:112]), interp_nans(YA[:, 112:133])
+        CL, CR = CA[:, 91:112], CA[:, 112:133]
+        header += ([f'hcL{i}' for i in range(21)] + [f'hxL{i}' for i in range(21)]
+                   + [f'hyL{i}' for i in range(21)]
+                   + [f'hcR{i}' for i in range(21)] + [f'hxR{i}' for i in range(21)]
+                   + [f'hyR{i}' for i in range(21)])
 
     with open(csv_path, 'w', newline='') as fh:
         w = csv.writer(fh)
-        w.writerow(['t'] + [f'c{i}' for i in range(17)]
-                   + [f'x{i}' for i in range(17)] + [f'y{i}' for i in range(17)])
+        w.writerow(header)
         for k in range(T):
-            w.writerow([f'{t_idx[k]:.4f}']
-                       + [f'{v:.4f}' for v in C[k]]
-                       + [f'{v:.4f}' for v in X[k]]
-                       + [f'{v:.4f}' for v in Y[k]])
+            vals = (C[k].tolist() + X[k].tolist() + Y[k].tolist())
+            if args.hands:
+                vals += (CL[k].tolist() + XL[k].tolist() + YL[k].tolist()
+                         + CR[k].tolist() + XR[k].tolist() + YR[k].tolist())
+            w.writerow([f'{t_idx[k]:.4f}'] + [f'{v:.4f}' for v in vals])
 
     gated = float((C < args.conf).mean())
     summary = {
@@ -190,16 +208,21 @@ def main():
         'res': f'{W}x{H}', 'src_fps': round(fps, 2), 'stride': args.stride,
         'frames_total': fi, 'frames_kept': T, 'frames_miss': miss,
         'duration_s': round(t_idx[-1], 2),
-        'conf_thr': args.conf,
+        'conf_thr': args.conf, 'hands': bool(args.hands),
         'conf_mean_body17': round(float(np.nanmean(np.where(C >= args.conf, C, np.nan))), 3),
         'kpts_gated_ratio': round(gated, 3),
         'accel': 'coreml' if accel else 'cpu',
         'wall_s': round(dt, 1),
         'eff_fps': round(T / dt, 1),
     }
+    if args.hands:
+        summary['hand_kpts_gated_ratio'] = round(
+            float(((CL < args.conf).mean() + (CR < args.conf).mean()) / 2), 3)
     write_json(os.path.join(args.out_dir, f'{name}_summary.json'), summary)
     log(f"{T}/{fi} 帧保留（miss {miss}）/ {summary['duration_s']}s → {csv_path}")
-    log(f"吞吐 {summary['eff_fps']} fps / conf 门控率 {gated * 100:.0f}%")
+    log(f"吞吐 {summary['eff_fps']} fps / conf 门控率 {gated * 100:.0f}%"
+        + (f" / 手部门控率 {summary['hand_kpts_gated_ratio'] * 100:.0f}%"
+           if args.hands else ''))
 
 
 if __name__ == '__main__':

@@ -37,28 +37,61 @@ BREATH_AMP = 0.25
 # 扭转（BodyAngleY）映射：鼻偏移（躯干尺度单位）→ 度（保守增益防饱和）
 TWIST_GAIN = 30.0
 
+# 本模块扩展通道的 canonical 量程（不在 arkit_map.STDANGES 内，bodymap 自行钳制）
+EXT_RANGES = {
+    'ParamArmLA': (-10, 10, 0), 'ParamArmRA': (-10, 10, 0),
+    'ParamArmLB': (-10, 10, 0), 'ParamArmRB': (-10, 10, 0),
+    'ParamHandAngleL': (-30, 30, 0), 'ParamHandAngleR': (-30, 30, 0),
+    'ParamBreath': (0, 1, 0),
+}
+ARM_GAIN = 9.0 / 90.0     # 侧举 0..90° → 0..9（canonical ±10 内）
+FOREARM_GAIN = 10.0 / 180.0  # 肘弯曲 0..180° → 0..10
+HAND_TILT_GAIN = 30.0 / 45.0  # 腕偏角 ±45° → ±30
+
 I = {'nose': 0, 'leye': 1, 'reye': 2, 'lear': 3, 'rear': 4,
-     'lsho': 5, 'rsho': 6, 'lhip': 11, 'rhip': 12}
+     'lsho': 5, 'rsho': 6, 'lelb': 7, 'relb': 8, 'lwri': 9, 'rwri': 10,
+     'lhip': 11, 'rhip': 12}
 
 
 def load_pose_csv(path):
-    """ingest CSV → (times(T,), C(T,17), X(T,17), Y(T,17))"""
+    """ingest CSV → (t, C, X, Y[, CL, XL, YL, CR, XR, YR])；手部列缺省时返回 6 元组"""
     with open(path, newline='') as fh:
         rows = list(csv.reader(fh))
     head = rows[0]
     t_col = head.index('t')
     c0, x0, y0 = head.index('c0'), head.index('x0'), head.index('y0')
+
+    def block(side):
+        """side='L'/'R' → (conf列, x列, y列) 索引列表"""
+        return ([head.index(f'hc{side}{i}') for i in range(21)],
+                [head.index(f'hx{side}{i}') for i in range(21)],
+                [head.index(f'hy{side}{i}') for i in range(21)])
+
+    has_hands = 'hcL0' in head
     t, C, X, Y = [], [], [], []
+    CL, XL, YL, CR, XR, YR = ([] for _ in range(6))
+    if has_hands:
+        cl, xl, yl = block('L')
+        cr, xr, yr = block('R')
     for r in rows[1:]:
         t.append(float(r[t_col]))
         C.append([float(v) for v in r[c0:c0 + 17]])
         X.append([float(v) for v in r[x0:x0 + 17]])
         Y.append([float(v) for v in r[y0:y0 + 17]])
-    return np.array(t), np.array(C), np.array(X), np.array(Y)
+        if has_hands:
+            CL.append([float(r[i]) for i in cl]); XL.append([float(r[i]) for i in xl])
+            YL.append([float(r[i]) for i in yl])
+            CR.append([float(r[i]) for i in cr]); XR.append([float(r[i]) for i in xr])
+            YR.append([float(r[i]) for i in yr])
+    out = [np.array(t), np.array(C), np.array(X), np.array(Y)]
+    if has_hands:
+        out += [np.array(a) for a in (CL, XL, YL, CR, XR, YR)]
+    return tuple(out)
 
 
-def frame_params(x, y, c, conf_thr=0.3):
-    """单帧归一化点位 → (canonical 参数 dict, 躯干长度或 None)"""
+def frame_params(x, y, c, conf_thr=0.3, hand=None):
+    """单帧归一化点位 → (canonical 参数 dict, 躯干长度或 None)
+    hand: None 或 {'L': (hx, hy, hc), 'R': (...)} 各 21 点（0=腕 9=中指根）"""
     p = {}
     g = c >= conf_thr
     lsho, rsho = I['lsho'], I['rsho']
@@ -103,11 +136,50 @@ def frame_params(x, y, c, conf_thr=0.3):
         head_len = abs(eye_mid[1] - sho_mid[1]) + 1e-3
         p['ParamAngleY'] = ((y[nose] - eye_mid[1]) / head_len) * 45.0 - 10.0
 
+    # ── 手臂（body17 的肩肘腕；A=上臂侧举，B=前臂弯曲）
+    for side, sign, sho_i, elb_i, wri_i, a_id, b_id in (
+            ('L', -1, I['lsho'], I['lelb'], I['lwri'], 'ParamArmLA', 'ParamArmLB'),
+            ('R', 1, I['rsho'], I['relb'], I['rwri'], 'ParamArmRA', 'ParamArmRB')):
+        if g[sho_i] and g[elb_i]:
+            vx, vy = x[elb_i] - x[sho_i], y[elb_i] - y[sho_i]
+            # 下垂为 0°，侧举（远离躯干方向）为正
+            raise_deg = math.degrees(math.atan2(sign * vx, vy if vy > 0 else 0.001))
+            p[a_id] = max(0.0, min(90.0, raise_deg if vy > 0 else 90.0)) * ARM_GAIN
+            if g[wri_i]:
+                ux, uy = x[wri_i] - x[elb_i], y[wri_i] - y[elb_i]
+                su = math.hypot(vx, vy) * math.hypot(ux, uy)
+                if su > 1e-6:
+                    cosv = max(-1.0, min(1.0, (vx * ux + vy * uy) / su))
+                    bend = math.degrees(math.acos(cosv))  # 180=伸直 → 0=全折
+                    p[b_id] = (180.0 - bend) * FOREARM_GAIN - 5.0
+
+    # ── 手腕（hand21: 0=腕, 9=中指根；腕偏角 vs 前臂方向）
+    if hand:
+        for side, elb_i, wri_i, pid in (
+                ('L', I['lelb'], I['lwri'], 'ParamHandAngleL'),
+                ('R', I['relb'], I['rwri'], 'ParamHandAngleR')):
+            h = hand.get(side)
+            if h is None or not (g[elb_i] and g[wri_i]):
+                continue
+            hx, hy, hc = h
+            if hc[0] < conf_thr or hc[9] < conf_thr:
+                continue
+            fx, fy = x[wri_i] - x[elb_i], y[wri_i] - y[elb_i]  # 前臂
+            px, py = hx[9] - hx[0], hy[9] - hy[0]              # 掌方向
+            ang = math.degrees(math.atan2(fx * py - fy * px, fx * px + fy * py))
+            p[pid] = max(-45.0, min(45.0, ang)) * HAND_TILT_GAIN
+
     return p, torso_len
 
 
 def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
-    t, C, X, Y = load_pose_csv(csv_path)
+    loaded = load_pose_csv(csv_path)
+    t, C, X, Y = loaded[:4]
+    hands = None
+    if len(loaded) == 10:
+        _, XL, YL, _, XR, YR = loaded[4:]
+        CL, CR = loaded[4], loaded[7]
+        hands = {'CL': CL, 'XL': XL, 'YL': YL, 'CR': CR, 'XR': XR, 'YR': YR}
     if len(t) < 5:
         raise ValueError(f'{csv_path}: 帧数不足（{len(t)}）')
 
@@ -115,7 +187,11 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
     series = {}
     torso_len = []
     for k in range(len(t)):
-        p, tl = frame_params(X[k], Y[k], C[k], conf_thr)
+        hand = None
+        if hands:
+            hand = {'L': (hands['XL'][k], hands['YL'][k], hands['CL'][k]),
+                    'R': (hands['XR'][k], hands['YR'][k], hands['CR'][k])}
+        p, tl = frame_params(X[k], Y[k], C[k], conf_thr, hand=hand)
         if tl is not None:
             torso_len.append((t[k], tl))
         for pid, v in p.items():
@@ -130,15 +206,17 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
         breath = [0.5 + BREATH_AMP * np.clip(d / (2 * amp), -1, 1) for _, d in sm]
         series['ParamBreath'] = [(tv[0], b) for tv, b in zip(sm, breath)]
 
-    # 3) 低通 + canonical 钳制
+    # 3) 低通 + canonical 钳制（STD 走 arkit_map；EXT 走本模块量程）
     ranges, _ = AM.load_calib(model, TOOLS)
     canon_series = {}
     for pid, ser in series.items():
-        ser = lowpass(ser, cutoff)
-        std = AM.STD_RANGES.get(pid)
-        if std:  # 角度通道：canonical 量程钳制
+        # 手部点位在低分辨率视频噪声大，单独用更低的截止频率
+        ch_cutoff = 4.0 if pid.startswith('ParamHand') else cutoff
+        ser = lowpass(ser, ch_cutoff)
+        std = AM.STD_RANGES.get(pid) or EXT_RANGES.get(pid)
+        if std:
             ser = [(tt, max(std[0], min(std[1], v * BODY_SIGN.get(pid, 1.0)))) for tt, v in ser]
-        else:    # Breath 等非 STD 通道：0..1
+        else:  # 未知通道兜底 0..1
             ser = [(tt, max(0.0, min(1.0, v))) for tt, v in ser]
         canon_series[pid] = ser
 
@@ -150,7 +228,7 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
         raw = [resample_lin(ser, tt) for tt in grid]
         if pid in AM.STD_RANGES:
             vals = [AM.fit_to_model({pid: v}, ranges).get(pid, v) for v in raw]
-        else:  # Breath 等非 STD 通道直通
+        else:  # EXT 通道：已按 EXT_RANGES 钳制，直通
             vals = raw
         if max(vals) - min(vals) < 1e-3:
             continue
@@ -159,7 +237,9 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
             seg += [0, grid[i], vals[i]]
         curves.append({'Target': 'Parameter', 'Id': pid, 'Segments': seg})
         vs = np.array(vals)
-        r = ranges.get(pid, {'min': 0, 'max': 1})
+        ext = EXT_RANGES.get(pid)
+        r = ranges.get(pid) or (
+            {'min': ext[0], 'max': ext[1]} if ext else {'min': 0, 'max': 1})
         speed = np.abs(np.diff(vs)) * out_fps
         qa[pid] = {'min': round(float(vs.min()), 2), 'max': round(float(vs.max()), 2),
                    'clip%': round(float(((vs <= r['min'] + 1e-6) |
