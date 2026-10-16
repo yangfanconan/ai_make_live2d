@@ -37,26 +37,39 @@ BREATH_AMP = 0.25
 # 扭转（BodyAngleY）映射：鼻偏移（躯干尺度单位）→ 度（保守增益防饱和）
 TWIST_GAIN = 30.0
 
-# 本模块扩展通道的 canonical 量程（不在 arkit_map.STDANGES 内，bodymap 自行钳制）
+# EXT 通道几何输出的物理参考区间（钳制时线性映射到模型实测区间）
+#   ArmL/R A: 上臂侧举角 0..90°；B: 肘弯折度 0..180°（180=伸直）
+#   HandAngle: 腕偏角 ±45°；HandChange: 指根扩散/掌长（0.25≈握拳..1.10≈张开，区间放宽
+#   吸收掌面朝向投影误差，避免两端贴量程）
+PHYS_RANGES = {
+    'ParamArmLA': (0, 90), 'ParamArmRA': (0, 90),
+    'ParamArmLB': (0, 180), 'ParamArmRB': (0, 180),
+    'ParamHandAngleL': (-45, 45), 'ParamHandAngleR': (-45, 45),
+    'ParamHandChangeL': (0.25, 1.10), 'ParamHandChangeR': (0.25, 1.10),
+    'ParamBreath': (0, 1),
+}
+# 无 calib 文件时的缺省模型区间（近似 Haru 实测）
 EXT_RANGES = {
-    'ParamArmLA': (-10, 10, 0), 'ParamArmRA': (-10, 10, 0),
-    'ParamArmLB': (-10, 10, 0), 'ParamArmRB': (-10, 10, 0),
-    'ParamHandAngleL': (-30, 30, 0), 'ParamHandAngleR': (-30, 30, 0),
+    'ParamArmLA': (-1, 1, 0), 'ParamArmRA': (-1, 1, 0),
+    'ParamArmLB': (-1, 5, 0), 'ParamArmRB': (-1, 5, 0),
+    'ParamHandAngleL': (-1, 1, 0), 'ParamHandAngleR': (-1, 1, 0),
+    'ParamHandChangeL': (0, 1, 0), 'ParamHandChangeR': (0, 1, 0),
     'ParamBreath': (0, 1, 0),
 }
-ARM_GAIN = 9.0 / 90.0     # 侧举 0..90° → 0..9（canonical ±10 内）
-FOREARM_GAIN = 10.0 / 180.0  # 肘弯曲 0..180° → 0..10
-HAND_TILT_GAIN = 30.0 / 45.0  # 腕偏角 ±45° → ±30
+# 模型参数名别名（Haru 官方拼写错误）
+ALIAS = {'ParamHandChangeL': 'ParamHandDhangeL'}
 
 # 通道级标定（kinetics-mini 7 片段日常动作实测 QA 的结论）：
 # 2D 投影角（眼线/肩线）在人物侧对镜头时会瞬间贴满量程（clip 53-98%、spd95>1000）
-# → 降增益 + 降截止；手部关键点在低分辨率视频上噪声大（spd95 160-460）→ 更低截止。
+# → 降截止；手部关键点在低分辨率视频上噪声大（spd95 160-460）→ 更低截止。
 CH_CALIB = {
     'ParamAngleZ':     {'cutoff': 3.0, 'gain': 0.5},
     'ParamBodyAngleZ': {'cutoff': 4.0, 'gain': 0.5},
     'ParamBodyAngleX': {'cutoff': 4.0, 'gain': 0.7},
-    'ParamHandAngleL': {'cutoff': 2.5, 'gain': 1.0},
-    'ParamHandAngleR': {'cutoff': 2.5, 'gain': 1.0},
+    'ParamHandAngleL': {'cutoff': 2.5},
+    'ParamHandAngleR': {'cutoff': 2.5},
+    'ParamHandChangeL': {'cutoff': 2.0},
+    'ParamHandChangeR': {'cutoff': 2.0},
 }
 
 I = {'nose': 0, 'leye': 1, 'reye': 2, 'lear': 3, 'rear': 4,
@@ -156,24 +169,25 @@ def frame_params(x, y, c, conf_thr=0.3, hand=None):
         head_len = abs(eye_mid[1] - sho_mid[1]) + 1e-3
         p['ParamAngleY'] = ((y[nose] - eye_mid[1]) / head_len) * 45.0 - 10.0
 
-    # ── 手臂（body17 的肩肘腕；A=上臂侧举，B=前臂弯曲）
+    # ── 手臂（body17 的肩肘腕；A=上臂侧举角，B=肘弯折度；物理量纲，映射段统一归一）
     for side, sign, sho_i, elb_i, wri_i, a_id, b_id in (
             ('L', -1, I['lsho'], I['lelb'], I['lwri'], 'ParamArmLA', 'ParamArmLB'),
             ('R', 1, I['rsho'], I['relb'], I['rwri'], 'ParamArmRA', 'ParamArmRB')):
         if g[sho_i] and g[elb_i]:
             vx, vy = x[elb_i] - x[sho_i], y[elb_i] - y[sho_i]
-            # 下垂为 0°，侧举（远离躯干方向）为正
-            raise_deg = math.degrees(math.atan2(sign * vx, vy if vy > 0 else 0.001))
-            p[a_id] = max(0.0, min(90.0, raise_deg if vy > 0 else 90.0)) * ARM_GAIN
+            # 下垂为 0°，侧举（远离躯干方向）为正；
+            # 肘在肩上方（vy<=0，多为朝镜头前摆）投影歧义 → 该帧不采信
+            if vy > 0:
+                raise_deg = math.degrees(math.atan2(sign * vx, vy))
+                p[a_id] = max(0.0, min(90.0, raise_deg))
             if g[wri_i]:
                 ux, uy = x[wri_i] - x[elb_i], y[wri_i] - y[elb_i]
                 su = math.hypot(vx, vy) * math.hypot(ux, uy)
                 if su > 1e-6:
                     cosv = max(-1.0, min(1.0, (vx * ux + vy * uy) / su))
-                    bend = math.degrees(math.acos(cosv))  # 180=伸直 → 0=全折
-                    p[b_id] = (180.0 - bend) * FOREARM_GAIN - 5.0
+                    p[b_id] = 180.0 - math.degrees(math.acos(cosv))  # 180=伸直→0=全折
 
-    # ── 手腕（hand21: 0=腕, 9=中指根；腕偏角 vs 前臂方向）
+    # ── 手部（hand21: 0=腕 5=食指根 9=中指根 17=小指根）
     if hand:
         for side, elb_i, wri_i, pid in (
                 ('L', I['lelb'], I['lwri'], 'ParamHandAngleL'),
@@ -187,7 +201,13 @@ def frame_params(x, y, c, conf_thr=0.3, hand=None):
             fx, fy = x[wri_i] - x[elb_i], y[wri_i] - y[elb_i]  # 前臂
             px, py = hx[9] - hx[0], hy[9] - hy[0]              # 掌方向
             ang = math.degrees(math.atan2(fx * py - fy * px, fx * px + fy * py))
-            p[pid] = max(-45.0, min(45.0, ang)) * HAND_TILT_GAIN
+            p[pid] = max(-45.0, min(45.0, ang))
+            # 手指开合：指根(5-17)扩散 / 掌长(0-9)
+            if hc[5] >= conf_thr and hc[17] >= conf_thr:
+                palm = math.hypot(hx[9] - hx[0], hy[9] - hy[0])
+                if palm > 1e-3:
+                    p['ParamHandChange' + side] = math.hypot(
+                        hx[5] - hx[17], hy[5] - hy[17]) / palm
 
     return p, torso_len
 
@@ -226,20 +246,34 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
         breath = [0.5 + BREATH_AMP * np.clip(d / (2 * amp), -1, 1) for _, d in sm]
         series['ParamBreath'] = [(tv[0], b) for tv, b in zip(sm, breath)]
 
-    # 3) 低通 + canonical 钳制（STD 走 arkit_map；EXT 走本模块量程）
+    # 3) 低通 + 钳制（STD 走 arkit_map canonical；EXT 物理量纲 → 模型实测区间归一映射）
     ranges, _ = AM.load_calib(model, TOOLS)
     canon_series = {}
     for pid, ser in series.items():
+        # 曲线 Target 用模型真实参数名（Haru 官方拼写别名）
+        pid_model = pid
+        if pid not in ranges and ALIAS.get(pid) in ranges:
+            pid_model = ALIAS[pid]
         cal = CH_CALIB.get(pid, {})
         ch_cutoff = cal.get('cutoff', 4.0 if pid.startswith('ParamHand') else cutoff)
         ser = lowpass(ser, ch_cutoff)
-        gain = cal.get('gain', 1.0) * BODY_SIGN.get(pid, 1.0)
-        std = AM.STD_RANGES.get(pid) or EXT_RANGES.get(pid)
-        if std:
-            ser = [(tt, max(std[0], min(std[1], v * gain))) for tt, v in ser]
-        else:  # 未知通道兜底 0..1
-            ser = [(tt, max(0.0, min(1.0, v))) for tt, v in ser]
-        canon_series[pid] = ser
+
+        phys = PHYS_RANGES.get(pid)
+        if phys:
+            # EXT 通道：物理区间 → 模型实测区间（无 calib 文件时用 EXT_RANGES 缺省）
+            r = ranges.get(pid_model)
+            lo, hi = (r['min'], r['max']) if r else EXT_RANGES[pid][:2]
+            span = phys[1] - phys[0]
+            ser = [(tt, lo + (max(phys[0], min(phys[1], v)) - phys[0])
+                    / span * (hi - lo)) for tt, v in ser]
+        else:
+            gain = cal.get('gain', 1.0) * BODY_SIGN.get(pid, 1.0)
+            std = AM.STD_RANGES.get(pid) or EXT_RANGES.get(pid)
+            if std:
+                ser = [(tt, max(std[0], min(std[1], v * gain))) for tt, v in ser]
+            else:  # 未知通道兜底 0..1
+                ser = [(tt, max(0.0, min(1.0, v))) for tt, v in ser]
+        canon_series[pid_model] = ser
 
     # 4) fit_to_model（仅 STD 通道；Breath 直通）→ 30fps motion3
     n_grid = int(round(t[-1] * out_fps))

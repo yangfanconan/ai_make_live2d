@@ -112,6 +112,11 @@
           "File": "motions/auto/body_mma.motion3.json",
           "FadeInTime": 0.5,
           "FadeOutTime": 0.5
+        },
+        {
+          "File": "motions/auto/body_march.motion3.json",
+          "FadeInTime": 0.5,
+          "FadeOutTime": 0.5
         }
       ]
     },

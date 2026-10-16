@@ -162,7 +162,7 @@ def adjudicate(job_dir, plan, done, run_external=False, model=None):
 def _judge_only(job_dir, args):
     job_dir = os.path.abspath(job_dir)
     plan = C.read_json(os.path.join(job_dir, 'plan.json'))
-    done = C.read_json(os.path.join(job_dir, 'done.json'))
+    done = C.read_json(os.path.join(job_dir, 'done.json')) or {}
     verdict = adjudicate(job_dir, plan, done, run_external=not args.no_judge)
     hard = [f for f in verdict['findings'] if f['severity'] == 'hard']
     C.log(f'verdict: {"PASS" if verdict["pass"] else "FAIL"}  '
