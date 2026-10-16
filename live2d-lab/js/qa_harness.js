@@ -351,6 +351,9 @@
 
   async function runTrajectory(tr, settleMs) {
     const frames = tr.frames.sort((a, b) => a.t - b.t);
+    // 前向填充：某帧缺写的参数继承之前最近关键帧的值（而非插值时当 0 滑落）
+    let carry = {};
+    for (const f of frames) { carry = { ...carry, ...f.params }; f.params = { ...carry }; }
     const dur = frames[frames.length - 1].t;
     // 采样时刻：10Hz 网格 + 源帧时刻（极值不漏）
     const times = new Set();

@@ -90,8 +90,8 @@ def _fetch_model():
     """从 /v1/models 动态取远端实际模型 id（切 7B 后 Mac 侧无需改配置）"""
     global MODEL
     try:
-        with urllib.request.urlopen(
-                HEALTHZ.replace('/healthz', '/v1/models'), timeout=3) as r:
+        base = HEALTHZ.rsplit('/', 1)[0]  # 去掉尾段（/healthz 等）再拼
+        with urllib.request.urlopen(base + '/v1/models', timeout=3) as r:
             data = json.loads(r.read().decode())
         ids = [m.get('id') for m in data.get('data', []) if m.get('id')]
         if ids:
@@ -166,7 +166,8 @@ def _ask(content, max_tokens=512):
 
 
 def _pick_pose_frames(payload):
-    """按 plan.poses 顺序取 frames/<name>.png（rest* 帧仅对照，不送判）"""
+    """按 plan.poses 顺序取 frames/<name>.png（rest* 帧仅对照，不送判）；
+    poses 为空（motion-only run）时按 plan.motions 取 <name>_NN.png（均匀采样 ≤12 帧/动作）"""
     fdir = payload.get('frames_dir')
     if not fdir or not os.path.isdir(fdir):
         return []
@@ -178,7 +179,22 @@ def _pick_pose_frames(payload):
         if name.startswith('rest') or not os.path.isfile(fp):
             continue
         out.append((name, fp, p.get('params', {})))
-    # plan 之外但存在的静态极值帧（如旧 run 的 rest2/extras）不追加以保持确定性
+    if out:
+        return out
+    for m in plan.get('motions', []):
+        name = m.get('name') or 'motion'
+        pat = re.compile(r'^' + re.escape(name) + r'_(\d+)\.png$')
+        try:
+            files = sorted((f, int(pat.match(f).group(1)))
+                           for f in os.listdir(fdir) if pat.match(f))
+        except OSError:
+            files = []
+        if not files:
+            continue
+        step = max(1, (len(files) + 11) // 12)
+        meta = {'motion': f"{m.get('group')}#{m.get('index')}"}
+        for f, idx in files[::step][:12]:
+            out.append((f[:-4], os.path.join(fdir, f), {**meta, 'frame': idx}))
     return out
 
 

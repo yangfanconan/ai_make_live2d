@@ -343,13 +343,19 @@ def run_external_judge(job_dir, plan, frames_note):
         'out_path': out_path,
     }
     log('调用外部判官 JUDGE_CMD ...')
+    # 超时按帧数动态放大：逐帧判定单帧最坏 ~40s（大模型/高分辨率图）
+    fdir = os.path.join(job_dir, 'frames')
+    n_frames = len([f for f in os.listdir(fdir) if f.endswith('.png')]) \
+        if os.path.isdir(fdir) else 0
+    timeout = max(600, min(n_frames, 60) * 40)
     try:
         r = subprocess.run([cmd, json.dumps(payload)], capture_output=True, text=True,
-                           timeout=600)
+                           timeout=timeout)
         if r.returncode != 0:
             log(f'外部判官退出码 {r.returncode}: {r.stderr[:500]}')
             return None
-        ext = json.load(open(out_path))
+        with open(out_path, encoding='utf-8') as fh:
+            ext = json.load(fh)
         write_json(out_path, ext)
         return ext
     except Exception as e:

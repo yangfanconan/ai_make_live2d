@@ -97,7 +97,8 @@ def normalize_frame(kp, conf, conf_thr):
 
 
 def interp_nans(mat):
-    """(T, K) 逐列线性插值 NaN（端点保持）"""
+    """(T, K) 逐列线性插值 NaN（端点保持）；整列无检出的关键点保持 NaN——
+    坐标无信息，置 0 会制造原点假数据，交给下游 conf 门控拦截。"""
     out = mat.copy()
     T = out.shape[0]
     for j in range(out.shape[1]):
@@ -105,7 +106,7 @@ def interp_nans(mat):
         idx = np.arange(T)
         ok = ~np.isnan(col)
         if ok.sum() == 0:
-            col[:] = 0.0
+            continue  # 全程不可见：保持 NaN
         elif ok.sum() < T:
             col[~ok] = np.interp(idx[~ok], idx[ok], col[ok])
         out[:, j] = col
