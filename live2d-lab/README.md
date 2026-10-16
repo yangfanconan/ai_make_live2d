@@ -444,7 +444,7 @@ Haru 已注册 3 个合成动作到 `Auto` 组：
 
 ## 已知限制
 
-- **自然度评分**：heuristic + VLM 双轨；`JUDGE_CMD=tools/agents/judge_vlm.py` 接入 4090 上的 Qwen2.5-VL（逐帧判定），Haru 实测 hard=0、natural=3（3B 模型打分偏保守，soft ASYMMETRY 误报仍偏多，7B 升级中）
+- **自然度评分**：heuristic + VLM 双轨；`JUDGE_CMD=tools/agents/judge_vlm.py` 接入 4090 上的 Qwen2.5-VL-7B（逐帧判定），Haru 实测 hard=0、natural=5、VLM 误报 0（3B 版 natural=3 + 19 条 ASYMMETRY 误报，已弃用；模型经 `run/model.txt` 切换，Mac 侧无需改配置）
 - **动作截帧**：200ms 异步采样，单帧可能落在过渡中（参数精度验收走 trajectory 确定性模式）
 - **手指开合未覆盖**：身体管线已覆盖躯干/头部/手臂/手腕；`ParamHandChange`（张合/手型）与物理摆动未做，手指细节需高分辨率素材
 - **身体增益已按日常动作标定**：kinetics-mini 7 片段（marching/archery/bowling）实测修掉 roll 角 atan2 180° 折叠（镜像朝向下 ±30 方波跳变）+ 正面性门控 + 通道级增益（`CH_CALIB`）；日常片段 clip 0-3.7%、spd95<200，弓箭斜身/保龄转身等专项动作贴量程属真实幅度
