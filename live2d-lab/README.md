@@ -132,6 +132,7 @@ live2d-lab/
 │   │   ├── moc3_auto_rig.py      # moc3 自动绑骨（结构增长 + A/B 验证）
 │   │   ├── qa_director.py        # QA Director（plan → 截帧 → 判定 → verdict）
 │   │   ├── judges.py             # heuristic 判定 + contact sheet + JUDGE_CMD 协议
+│   │   ├── judge_vlm.py          # JUDGE_CMD 多模态判官（远端 VLM 逐帧打分 + 三级自愈）
 │   │   ├── common.py             # 共享基础设施（路径/服务/verdict IO）
 │   │   │
 │   │   ├── express4d/            # L2 小模型管线（ARKit → Live2D 解码层）
@@ -153,8 +154,10 @@ live2d-lab/
 │   │   ├── pose/                 # 身体驱动管线（视频 → DWPose → Live2D 身体参数）
 │   │   │   ├── ingest.py         #   视频 → RTMW 17 身体点(+42 手点 --hands)归一化 CSV
 │   │   │   │                     #     CoreML EP 加速 / conf 门控 / 逐列插值 / 多人取最大
-│   │   │   └── bodymap.py        #   点位 → 13 通道 L1 几何（躯干3+头3+臂4+腕2+呼吸1）
-│   │   │                         #     → 低通 → 钳制 → fit_to_model → motion3 + 数值 QA
+│   │   │   ├── bodymap.py        #   点位 → 13 通道 L1 几何（躯干3+头3+臂4+腕2+呼吸1）
+│   │   │   │                     #     → 低通 → 钳制 → fit_to_model → motion3 + 数值 QA
+│   │   │   │                     #     roll 角 180° 折叠规约 + 正面性门控 + 通道级增益标定
+│   │   │   └── fetch_clips.py    #   kinetics-mini 开源素材抓取（hf-mirror，日常动作标定）
 │   │   │
 │   │   └── rubrics/qa_rubric.md  # 多模态判官评分 rubric
 │   │
@@ -321,6 +324,12 @@ python3 tools/agents/qa_director.py --model Haru --motion synth_blink
 
 # 只重新判定已有 run（不重新截帧）
 python3 tools/agents/qa_director.py --model Haru --judge-only
+
+# 多模态判官（4090 工作站上的 Qwen2.5-VL，OpenAI 兼容 :8300）
+# 链路：Mac :8300 --ssh -N -L--> 192.168.2.2:8300；judge_vlm 三级自愈
+# （healthz 通 → 起隧道 → SSH 拉起远端服务），逐帧判定杜绝小模型复读 rubric 示例
+JUDGE_CMD=$(pwd)/tools/agents/judge_vlm.py \
+    python3 tools/agents/qa_director.py --model Haru
 ```
 
 ---
@@ -435,10 +444,10 @@ Haru 已注册 3 个合成动作到 `Auto` 组：
 
 ## 已知限制
 
-- **自然度评分**：当前为 heuristic + 人工目检；`JUDGE_CMD` 多模态判官接入后替换为自动分数
+- **自然度评分**：heuristic + VLM 双轨；`JUDGE_CMD=tools/agents/judge_vlm.py` 接入 4090 上的 Qwen2.5-VL（逐帧判定），Haru 实测 hard=0、natural=3（3B 模型打分偏保守，soft ASYMMETRY 误报仍偏多，7B 升级中）
 - **动作截帧**：200ms 异步采样，单帧可能落在过渡中（参数精度验收走 trajectory 确定性模式）
 - **手指开合未覆盖**：身体管线已覆盖躯干/头部/手臂/手腕；`ParamHandChange`（张合/手型）与物理摆动未做，手指细节需高分辨率素材
-- **身体增益未标定**：L1 几何增益为保守启发式，方向/幅度标定需正常坐姿 VTuber 素材（当前仅仰卧起坐压力测试验证，极端姿态 QA 会正确报饱和）
+- **身体增益已按日常动作标定**：kinetics-mini 7 片段（marching/archery/bowling）实测修掉 roll 角 atan2 180° 折叠（镜像朝向下 ±30 方波跳变）+ 正面性门控 + 通道级增益（`CH_CALIB`）；日常片段 clip 0-3.7%、spd95<200，弓箭斜身/保龄转身等专项动作贴量程属真实幅度
 - **L3 自由短文本分布偏移**：text2pose v1 训练语料是 KeyframeFace 的长描述风格（~300 字），自由短 prompt 会偏向 smile 均值解；SBERT(all-MiniLM) 句向量方案已实测证伪（全链路退化 2–3×），TF-IDF + 大 MLP 为当前最优，后续可试 domain-adapted 句向量
 - **L3 头部姿态标定近似**：jsonl 头部值量化到 0.1，逐帧对齐不可行；bridge.py 用分位分布匹配标定（Yaw×1.81 / Pitch×0.95 / Roll×1.14），属近似方案
 - **网络依赖**：AI 换肤需 ComfyUI API 可达；SAM 首次分割需 2.4GB 权重；DWPose 首次运行经 download.openmmlab.com 拉模型（~315MB）
@@ -456,6 +465,7 @@ Haru 已注册 3 个合成动作到 `Auto` 组：
 | 身体驱动 | rtmlib DWPose（YOLOX-m + RTMW-DW 133 点）+ onnxruntime CoreML EP |
 | AI 换肤 | SAM (ViT-H) + ComfyUI (SD1.5 inpaint) + HSV 程序迁移 |
 | QA 基础设施 | ThreadingHTTPServer + Canvas 离屏截帧 + numpy/PIL heuristic |
+| VLM 判官 | Qwen2.5-VL（4090 工作站）+ FastAPI OpenAI 兼容服务 + SSH 隧道三级自愈 |
 | 前端 | 原生 HTML/CSS/JS（无构建步骤） |
 
 ---

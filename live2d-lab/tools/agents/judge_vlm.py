@@ -79,29 +79,70 @@ def _http_ok(url, timeout=2):
         return False
 
 
-def ensure_tunnel():
-    """端点在本机（隧道口）时探测 healthz，不通则自启后台 SSH 转发并等待就绪"""
-    if '127.0.0.1' not in ENDPOINT and 'localhost' not in ENDPOINT:
-        return  # 直连远端模式（防火墙放行时），无需隧道
-    if _http_ok(HEALTHZ):
-        return
+def _ssh_args():
     key = os.path.expanduser(os.environ.get('VLM_SSH_KEY', '~/.ssh/id_ed25519_trae4090'))
     host = os.environ.get('VLM_SSH_HOST', '192.168.2.2')
     user = os.environ.get('VLM_SSH_USER', 'yangfan')
+    return key, f'{user}@{host}'
+
+
+def _fetch_model():
+    """从 /v1/models 动态取远端实际模型 id（切 7B 后 Mac 侧无需改配置）"""
+    global MODEL
+    try:
+        with urllib.request.urlopen(
+                HEALTHZ.replace('/healthz', '/v1/models'), timeout=3) as r:
+            data = json.loads(r.read().decode())
+        ids = [m.get('id') for m in data.get('data', []) if m.get('id')]
+        if ids:
+            MODEL = ids[0]
+    except Exception:
+        pass
+
+
+def ensure_tunnel():
+    """三级自愈：① healthz 通直接用 → ② 起本地隧道 → ③ SSH 到远端拉起服务"""
+    if '127.0.0.1' not in ENDPOINT and 'localhost' not in ENDPOINT:
+        return  # 直连远端模式（防火墙放行时），无需隧道
+    if _http_ok(HEALTHZ):
+        _fetch_model()
+        return
+    key, dest = _ssh_args()
     port = os.environ.get('VLM_TUNNEL_PORT', '8300')
     subprocess.Popen(
         ['ssh', '-i', key,
          '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
          '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15',
          '-o', 'ServerAliveCountMax=3', '-o', 'LogLevel=ERROR',
-         '-f', '-N', '-L', f'{port}:127.0.0.1:{port}', f'{user}@{host}'],
+         '-f', '-N', '-L', f'{port}:127.0.0.1:{port}', dest],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(20):  # 最多等 10s
+    for _ in range(20):  # 隧道就绪最多 10s
         time.sleep(0.5)
         if _http_ok(HEALTHZ):
             print('judge_vlm: ssh tunnel ready', flush=True)
+            _fetch_model()
             return
-    print('judge_vlm: tunnel not ready in 10s, will let request fail loudly',
+    # 隧道就绪但远端服务没响应 → SSH 过去幂等拉起（ensure_serve 自带加载等待）
+    print('judge_vlm: tunnel up but service dead, relaunching remote serve ...',
+          file=sys.stderr, flush=True)
+    try:
+        subprocess.run(
+            ['ssh', '-i', key,
+             '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
+             '-o', 'LogLevel=ERROR', dest,
+             '"D:\\live2d-svc\\venv\\Scripts\\python.exe" '
+             '"D:\\live2d-svc\\run\\ensure_serve.py"'],
+            capture_output=True, timeout=180)
+    except Exception as e:
+        print(f'judge_vlm: remote relaunch failed: {e}', file=sys.stderr)
+        return
+    for _ in range(20):
+        time.sleep(0.5)
+        if _http_ok(HEALTHZ):
+            print('judge_vlm: remote serve relaunched', flush=True)
+            _fetch_model()
+            return
+    print('judge_vlm: service still dead after relaunch, request will fail loudly',
           file=sys.stderr)
 
 
