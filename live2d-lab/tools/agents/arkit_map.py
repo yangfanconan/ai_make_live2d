@@ -153,14 +153,16 @@ def map_frame(bs, head=None):
 
 def load_calib(model, tools_dir):
     """读 QA harness 实测的量程种子；不存在则回退标准量程。
-    返回 (ranges, signs)。"""
+    返回 (ranges, signs)。STD 通道供 fit_to_model 锚定缩放；
+    EXT 通道（Arm/Hand/Breath）供 bodymap 归一映射，一并采纳。"""
     path = os.path.join(tools_dir, f'.motion-calib-{model}.json')
     ranges = {k: {'min': v[0], 'max': v[1], 'def': v[2]} for k, v in STD_RANGES.items()}
     signs = dict(ANGLE_SIGN)
+    ext_prefixes = ('ParamArm', 'ParamHand', 'ParamBreath')
     if os.path.exists(path):
         data = json.load(open(path))
         for pid, r in (data.get('ranges') or {}).items():
-            if pid in STD_RANGES:  # 只采纳我们会产出的通道
+            if pid in STD_RANGES or pid.startswith(ext_prefixes):
                 ranges[pid] = {'min': float(r['min']), 'max': float(r['max']),
                                'def': float(r['def'])}
         for pid, s in (data.get('signs') or {}).items():

@@ -102,7 +102,8 @@ class H(BaseHTTPRequestHandler):
         if self.path == '/shot':
             try:
                 data = self._decode_dataurl(body['data'])
-                path = f"{TOOLS}/{body['name']}_{datetime.now().strftime('%H%M%S')}.png"
+                name = re.sub(r'[^A-Za-z0-9_.-]', '_', str(body.get('name', 'shot')))
+                path = f"{TOOLS}/{name}_{datetime.now().strftime('%H%M%S')}.png"
                 with open(path, 'wb') as f:
                     f.write(data)
                 print('saved', path, flush=True)
