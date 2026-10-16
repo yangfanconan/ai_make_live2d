@@ -48,6 +48,17 @@ ARM_GAIN = 9.0 / 90.0     # 侧举 0..90° → 0..9（canonical ±10 内）
 FOREARM_GAIN = 10.0 / 180.0  # 肘弯曲 0..180° → 0..10
 HAND_TILT_GAIN = 30.0 / 45.0  # 腕偏角 ±45° → ±30
 
+# 通道级标定（kinetics-mini 7 片段日常动作实测 QA 的结论）：
+# 2D 投影角（眼线/肩线）在人物侧对镜头时会瞬间贴满量程（clip 53-98%、spd95>1000）
+# → 降增益 + 降截止；手部关键点在低分辨率视频上噪声大（spd95 160-460）→ 更低截止。
+CH_CALIB = {
+    'ParamAngleZ':     {'cutoff': 3.0, 'gain': 0.5},
+    'ParamBodyAngleZ': {'cutoff': 4.0, 'gain': 0.5},
+    'ParamBodyAngleX': {'cutoff': 4.0, 'gain': 0.7},
+    'ParamHandAngleL': {'cutoff': 2.5, 'gain': 1.0},
+    'ParamHandAngleR': {'cutoff': 2.5, 'gain': 1.0},
+}
+
 I = {'nose': 0, 'leye': 1, 'reye': 2, 'lear': 3, 'rear': 4,
      'lsho': 5, 'rsho': 6, 'lelb': 7, 'relb': 8, 'lwri': 9, 'rwri': 10,
      'lhip': 11, 'rhip': 12}
@@ -111,8 +122,13 @@ def frame_params(x, y, c, conf_thr=0.3, hand=None):
         torso_len = math.hypot(dx, dy)  # Breath 用
 
     # ── 躯干 roll（BodyAngleZ）：肩线角（屏幕系顺时针为正 → Live2D Z 取负）
-    if has_sho:
+    # 门控：侧对镜头时肩线屏幕角是「朝向投影」非 roll，仅肩横向充分展开（近正面）才采信
+    if has_sho and torso_len and abs(x[rsho] - x[lsho]) / torso_len > 0.30:
         ang = math.degrees(math.atan2(y[rsho] - y[lsho], x[rsho] - x[lsho]))
+        if ang > 90:    # 180° 折叠：镜像朝向下水平线会得 ±180，规约回小倾角
+            ang -= 180
+        elif ang < -90:
+            ang += 180
         p['ParamBodyAngleZ'] = -ang
 
     # ── 躯干扭转（BodyAngleY）：鼻水平偏移代理
@@ -127,10 +143,14 @@ def frame_params(x, y, c, conf_thr=0.3, hand=None):
         # yaw：鼻在耳中线法向上的偏移 / 耳距（偏移钳 ±0.5 防侧脸发散）
         off = max(-0.5, min(0.5, (x[nose] - ear_mid[0]) / ear_w))
         p['ParamAngleX'] = -off * 60.0
-    if g[leye] and g[reye]:
-        # roll：眼线角
-        p['ParamAngleZ'] = -math.degrees(math.atan2(y[reye] - y[leye],
-                                                    x[reye] - x[leye] + 1e-9))
+    if ear_w > 0.20 and g[leye] and g[reye]:
+        # roll：眼线角（与 yaw 同门控：侧脸时眼线是朝向投影，非 roll）
+        ang = math.degrees(math.atan2(y[reye] - y[leye], x[reye] - x[leye] + 1e-9))
+        if ang > 90:    # 180° 折叠：镜像朝向下水平眼线会得 ±180，规约回小倾角
+            ang -= 180
+        elif ang < -90:
+            ang += 180
+        p['ParamAngleZ'] = -ang
     if sho_mid and g[nose] and g[leye] and g[reye]:
         eye_mid = ((x[leye] + x[reye]) / 2, (y[leye] + y[reye]) / 2)
         head_len = abs(eye_mid[1] - sho_mid[1]) + 1e-3
@@ -210,12 +230,13 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
     ranges, _ = AM.load_calib(model, TOOLS)
     canon_series = {}
     for pid, ser in series.items():
-        # 手部点位在低分辨率视频噪声大，单独用更低的截止频率
-        ch_cutoff = 4.0 if pid.startswith('ParamHand') else cutoff
+        cal = CH_CALIB.get(pid, {})
+        ch_cutoff = cal.get('cutoff', 4.0 if pid.startswith('ParamHand') else cutoff)
         ser = lowpass(ser, ch_cutoff)
+        gain = cal.get('gain', 1.0) * BODY_SIGN.get(pid, 1.0)
         std = AM.STD_RANGES.get(pid) or EXT_RANGES.get(pid)
         if std:
-            ser = [(tt, max(std[0], min(std[1], v * BODY_SIGN.get(pid, 1.0)))) for tt, v in ser]
+            ser = [(tt, max(std[0], min(std[1], v * gain))) for tt, v in ser]
         else:  # 未知通道兜底 0..1
             ser = [(tt, max(0.0, min(1.0, v))) for tt, v in ser]
         canon_series[pid] = ser
