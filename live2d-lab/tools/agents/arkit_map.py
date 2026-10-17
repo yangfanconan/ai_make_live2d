@@ -96,17 +96,21 @@ def _deg(rad):
     return math.degrees(float(rad))
 
 
-def map_frame(bs, head=None):
+def map_frame(bs, head=None, angle_sign=None):
     """单帧：bs 为归一化后的 ARKit 名->0..1，head 可选 {'yaw','pitch','roll'} 弧度。
+    angle_sign 可选覆盖角度符号（calib signs），缺省用模块级 ANGLE_SIGN。
     返回 canonical Live2D 参数（标准语义空间，未做模型量程缩放）。"""
     bs = dict(bs)
     head = head or {}
+    sign = dict(ANGLE_SIGN)
+    if angle_sign:  # calib 覆盖为部分键合并，而非整体替换
+        sign.update(angle_sign)
     c = {}
 
     # 头部三轴（度 + 符号）
-    c['ParamAngleX'] = ANGLE_SIGN['ParamAngleX'] * _deg(head.get('yaw', bs.get('headYaw', 0)))
-    c['ParamAngleY'] = ANGLE_SIGN['ParamAngleY'] * _deg(head.get('pitch', bs.get('headPitch', 0)))
-    c['ParamAngleZ'] = ANGLE_SIGN['ParamAngleZ'] * _deg(head.get('roll', bs.get('headRoll', 0)))
+    c['ParamAngleX'] = sign['ParamAngleX'] * _deg(head.get('yaw', bs.get('headYaw', 0)))
+    c['ParamAngleY'] = sign['ParamAngleY'] * _deg(head.get('pitch', bs.get('headPitch', 0)))
+    c['ParamAngleZ'] = sign['ParamAngleZ'] * _deg(head.get('roll', bs.get('headRoll', 0)))
 
     # 眼开合：眨眼主导；眯眼（笑/瞪眼眯）压一点
     for side, pid, blink, squint in (
@@ -195,15 +199,5 @@ def map_row_to_model(raw, ranges, signs=None):
     """给 motion_author 的一行式入口：原始行（blendshape + headYaw/Pitch/Roll 列）
     → 模型量程参数 dict。"""
     bs = normalize_row(raw)
-    # ANGLE_SIGN 若被 calib 覆盖，在角度换算阶段生效：临时调整
-    if signs:
-        global ANGLE_SIGN
-        saved = dict(ANGLE_SIGN)
-        ANGLE_SIGN.update(signs)
-        try:
-            canon = map_frame(bs)
-        finally:
-            ANGLE_SIGN = saved
-    else:
-        canon = map_frame(bs)
+    canon = map_frame(bs, angle_sign=signs)
     return fit_to_model(canon, ranges)

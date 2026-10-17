@@ -93,11 +93,11 @@ def resample_lin(series_tv, t):
 
 
 def author(csv_path, model, out_path, cutoff=12.0, out_fps=30, loop=False,
-           tools_dir=TOOLS, activity_eps=1e-3):
+           tools_dir=TOOLS, activity_eps=1e-3, tc_fps=60):
     ranges, signs = AM.load_calib(model, tools_dir)
 
     # 1) 逐行映射到模型量程
-    rows = load_csv_rows(csv_path)
+    rows = load_csv_rows(csv_path, tc_fps=tc_fps)
     if len(rows) < 2:
         raise ValueError(f'CSV 有效行不足：{len(rows)}')
     raw_series = {}  # pid -> [(t, v)]
@@ -184,11 +184,14 @@ def main():
     ap.add_argument('--cutoff', type=float, default=12.0)
     ap.add_argument('--fps', type=int, default=30)
     ap.add_argument('--loop', action='store_true')
+    ap.add_argument('--tc-fps', type=float, default=60,
+                    help='HH:MM:SS:FF 时间码的帧率（Live Link Face 导出设置，30fps 导出填 30）')
     args = ap.parse_args()
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     _, rep = author(args.csv, args.model, args.out,
-                    cutoff=args.cutoff, out_fps=args.fps, loop=args.loop)
+                    cutoff=args.cutoff, out_fps=args.fps, loop=args.loop,
+                    tc_fps=args.tc_fps)
     log(f'motion3 已写出：{rep["out"]}')
     log(f'  时长 {rep["duration_src"]}s / {rep["frames_in"]} 行 → '
         f'{len(rep["channels"])} 条曲线')

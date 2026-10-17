@@ -79,14 +79,14 @@ def normalize_frame(kp, conf, conf_thr):
         oy = (kp[KP['lhip'], 1] + kp[KP['rhip'], 1]) / 2
         sx = (kp[KP['lsho'], 0] + kp[KP['rsho'], 0]) / 2
         sy = (kp[KP['lsho'], 1] + kp[KP['rsho'], 1]) / 2
+        scale = math.hypot(sx - ox, sy - oy)  # 躯干长（髋中→肩中）
     elif ms:  # 髋不可见（半身镜头）→ 用肩作原点、肩宽作尺度
         ox = (kp[KP['lsho'], 0] + kp[KP['rsho'], 0]) / 2
         oy = (kp[KP['lsho'], 1] + kp[KP['rsho'], 1]) / 2
-        sx = kp[KP['lsho'], 0]
-        sy = kp[KP['lsho'], 1]
+        scale = math.hypot(kp[KP['lsho'], 0] - kp[KP['rsho'], 0],
+                           kp[KP['lsho'], 1] - kp[KP['rsho'], 1])  # 真肩宽
     else:
         return None
-    scale = math.hypot(sx - ox, sy - oy)
     if scale < 1e-6:
         return None
     xn = (kp[:, 0] - ox) / scale

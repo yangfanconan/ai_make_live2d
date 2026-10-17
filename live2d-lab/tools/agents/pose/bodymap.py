@@ -293,6 +293,9 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
         curves.append({'Target': 'Parameter', 'Id': pid, 'Segments': seg})
         vs = np.array(vals)
         ext = EXT_RANGES.get(pid)
+        if ext is None:  # 模型别名（Haru Dhange 拼写）反查标准名
+            rev = {v: k for k, v in ALIAS.items()}
+            ext = EXT_RANGES.get(rev.get(pid, pid))
         r = ranges.get(pid) or (
             {'min': ext[0], 'max': ext[1]} if ext else {'min': 0, 'max': 1})
         speed = np.abs(np.diff(vs)) * out_fps

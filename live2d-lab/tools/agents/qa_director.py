@@ -209,7 +209,7 @@ def main():
 
     if not args.no_browser:
         url = f'{C.WEB_URL}/qa/harness.html?job={urllib.parse.quote(job)}'
-        C.open_browser(url)
+        C.open_harness(url)  # Chrome：pixi-live2d-display 兼容性最佳
     else:
         C.log('no-browser：请手动打开 '
               f'{C.WEB_URL}/qa/harness.html?job={urllib.parse.quote(job)}')
