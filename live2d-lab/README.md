@@ -154,9 +154,11 @@ live2d-lab/
 │   │   ├── pose/                 # 身体驱动管线（视频 → DWPose → Live2D 身体参数）
 │   │   │   ├── ingest.py         #   视频 → RTMW 17 身体点(+42 手点 --hands)归一化 CSV
 │   │   │   │                     #     CoreML EP 加速 / conf 门控 / 逐列插值 / 多人取最大
-│   │   │   ├── bodymap.py        #   点位 → 15 通道 L1 几何（躯干3+头3+臂4+腕2+开合2+呼吸1）
+│   │   │   ├── bodymap.py        #   点位 → 15-17 通道 L1 几何（躯干3+头3+臂4+腕2+开合2+呼吸1+手型*）
 │   │   │   │                     #     → 低通 → 物理量纲→模型实测区间归一 → motion3 + 数值 QA
 │   │   │   │                     #     roll 角 180° 折叠规约 + 正面性门控 + 前摆门控
+│   │   │   │                     #     手型：每指伸展度→规则分类(open/fist/pinch/victory/point/
+│   │   │   │                     #     three/partial)→帧占比统计；按模型能力路由驱动
 │   │   │   └── fetch_clips.py    #   kinetics-mini 开源素材抓取（hf-mirror，日常动作标定）
 │   │   │
 │   │   └── rubrics/qa_rubric.md  # 多模态判官评分 rubric
@@ -445,7 +447,7 @@ Haru 已注册 3 个合成动作到 `Auto` 组：
 ## 已知限制
 
 - **自然度评分**：heuristic + VLM 双轨；`JUDGE_CMD=tools/agents/judge_vlm.py` 接入 4090 上的 Qwen2.5-VL-7B（逐帧判定），Haru 实测 hard=0、natural=5、VLM 误报 0（3B 版 natural=3 + 19 条 ASYMMETRY 误报，已弃用；模型经 `run/model.txt` 切换，Mac 侧无需改配置）
-- **手指开合已覆盖**：`ParamHandDhangeL/R`（Haru 官方拼写）由指根扩散/掌长驱动（0.25≈握拳..1.10≈张开，区间放宽吸收掌面朝向投影误差）；EXT 通道全部改为物理量纲 → 模型实测区间归一映射（原 ±30/±10 canonical 直通与 Haru ±1 量程错位致渲染饱和）；上臂前摆帧（肘高于肩）投影歧义不采信。手型（V 手/指差）与物理摆动参数未做
+- **手指开合与手型已覆盖**：开合（`ParamHandDhangeL/R`，指根扩散/掌长）+ 手型状态估计（每指伸展度 → 规则分类 open/fist/pinch/victory/point/three/partial → report 帧占比，供剧本系统查询）；手型伸展度按模型能力路由（Hiyori `ParamHandL/R` 连续形变 -1..1，Haru 无该参数时防双驱动自动跳过）；EXT 通道全部物理量纲 → 模型实测区间归一映射；上臂前摆帧（肘高于肩）投影歧义不采信。V 手/指差**驱动**需模型带手型形变参数（现有官方模型均无专属参数，分类结果已就绪待路由）
 - **动作截帧**：200ms 异步采样，单帧可能落在过渡中（参数精度验收走 trajectory 确定性模式）；长动作 QA 时 Chrome 后台 tab 会被节流拉长采样（~1 帧/s），需保持前台或加大 `--timeout`
 - **身体增益已按日常动作标定**：kinetics-mini 7 片段（marching/archery/bowling）实测修掉 roll 角 atan2 180° 折叠（镜像朝向下 ±30 方波跳变）+ 正面性门控 + 通道级增益（`CH_CALIB`）；日常片段 clip 0-3.7%、spd95<200，弓箭斜身/保龄转身等专项动作贴量程属真实幅度
 - **L3 自由短文本分布偏移**：text2pose v1 训练语料是 KeyframeFace 的长描述风格（~300 字），自由短 prompt 会偏向 smile 均值解；SBERT(all-MiniLM) 句向量方案已实测证伪（全链路退化 2–3×），TF-IDF + 大 MLP 为当前最优，后续可试 domain-adapted 句向量
