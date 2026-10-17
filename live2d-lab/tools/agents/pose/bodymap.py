@@ -46,6 +46,7 @@ PHYS_RANGES = {
     'ParamArmLB': (0, 180), 'ParamArmRB': (0, 180),
     'ParamHandAngleL': (-45, 45), 'ParamHandAngleR': (-45, 45),
     'ParamHandChangeL': (0.25, 1.10), 'ParamHandChangeR': (0.25, 1.10),
+    'ParamHandPoseL': (0.45, 1.0), 'ParamHandPoseR': (0.45, 1.0),  # 四指平均伸展度
     'ParamBreath': (0, 1),
 }
 # 无 calib 文件时的缺省模型区间（近似 Haru 实测）
@@ -70,11 +71,69 @@ CH_CALIB = {
     'ParamHandAngleR': {'cutoff': 2.5},
     'ParamHandChangeL': {'cutoff': 2.0},
     'ParamHandChangeR': {'cutoff': 2.0},
+    'ParamHandL': {'cutoff': 2.0},   # 路由后的手型伸展度（Hiyori 型）
+    'ParamHandR': {'cutoff': 2.0},
 }
 
 I = {'nose': 0, 'leye': 1, 'reye': 2, 'lear': 3, 'rear': 4,
      'lsho': 5, 'rsho': 6, 'lelb': 7, 'relb': 8, 'lwri': 9, 'rwri': 10,
      'lhip': 11, 'rhip': 12}
+
+# 手型链（MediaPipe hand21 布局；每指 = 指根..指尖）
+# thumb: 1-2-3-4 | index: 5-6-7-8 | middle: 9-10-11-12 | ring: 13-14-15-16 | pinky: 17-18-19-20
+FINGER_CHAINS = ((2, 3, 4), (5, 6, 7, 8), (9, 10, 11, 12),
+                 (13, 14, 15, 16), (17, 18, 19, 20))
+
+
+def hand_features(hx, hy, hc, conf_thr):
+    """hand21 → (四指平均伸展度 0..1, 拇指伸展度, 拇食捏合度, 分类标签 or None)。
+    伸展度 = 指尖到腕距离 / 链段总长（伸直≈1，蜷曲≈0.4-0.5）。"""
+    palm = math.hypot(hx[9] - hx[0], hy[9] - hy[0])
+    if palm < 1e-3:
+        return None
+    curls = []
+    for chain in FINGER_CHAINS[1:]:  # 四指（不含拇指）
+        if any(hc[i] < conf_thr for i in chain):
+            return None  # 任一指关键点不可信则整手不判
+        seg = sum(math.hypot(hx[b] - hx[a], hy[b] - hy[a])
+                  for a, b in zip(chain, chain[1:]))
+        seg += math.hypot(hx[chain[0]] - hx[0], hy[chain[0]] - hy[0])  # 腕→指根
+        if seg < 1e-3:
+            return None
+        curls.append(math.hypot(hx[chain[-1]] - hx[0], hy[chain[-1]] - hy[0]) / seg)
+    thumb_c = pinch = None
+    if all(hc[i] >= conf_thr for i in FINGER_CHAINS[0]):
+        tc = FINGER_CHAINS[0]
+        seg = (math.hypot(hx[tc[0]] - hx[0], hy[tc[0]] - hy[0])
+               + sum(math.hypot(hx[b] - hx[a], hy[b] - hy[a])
+                     for a, b in zip(tc, tc[1:])))
+        if seg > 1e-3:
+            thumb_c = math.hypot(hx[4] - hx[0], hy[4] - hy[0]) / seg
+        if hc[8] >= conf_thr:
+            pinch = math.hypot(hx[4] - hx[8], hy[4] - hy[8]) / palm
+    avg = sum(curls) / len(curls)
+    label = classify_hand(curls, thumb_c, pinch)
+    return avg, thumb_c, pinch, label
+
+
+def classify_hand(curls, thumb_c, pinch):
+    """规则手型分类（四指伸展度 + 拇指 + 捏合）。返回标签字符串。"""
+    ext = [c > 0.78 for c in curls]      # 伸直
+    folded = [c < 0.65 for c in curls]   # 蜷起
+    n_ext, n_fold = sum(ext), sum(folded)
+    if pinch is not None and pinch < 0.45 and ext[1] and ext[2]:
+        return 'pinch'                    # 拇食捏合（OK/拉弓/比心类）
+    if n_ext >= 3 and (pinch is None or pinch > 0.6):
+        return 'open'                     # 张开手掌
+    if n_fold >= 3 and (pinch is None or pinch > 0.6):
+        return 'fist'                     # 握拳
+    if ext[0] and ext[1] and folded[2] and folded[3]:
+        return 'victory'                  # V 手（食+中伸，无名+小指蜷）
+    if ext[0] and folded[1] and folded[2] and folded[3]:
+        return 'point'                    # 指差（仅食指伸）
+    if ext[0] and ext[1] and ext[2] and folded[3]:
+        return 'three'
+    return 'partial'
 
 
 def load_pose_csv(path):
@@ -208,6 +267,11 @@ def frame_params(x, y, c, conf_thr=0.3, hand=None):
                 if palm > 1e-3:
                     p['ParamHandChange' + side] = math.hypot(
                         hx[5] - hx[17], hy[5] - hy[17]) / palm
+            # 手型：四指平均伸展度（连续）+ 分类标签（进 report）
+            hf = hand_features(hx, hy, hc, conf_thr)
+            if hf is not None:
+                p['ParamHandPose' + side] = hf[0]  # 平均伸展度 0.4..1.0
+                p.setdefault('_hand_label_' + side, hf[3])
 
     return p, torso_len
 
@@ -226,6 +290,7 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
     # 1) 逐帧几何 → 通道时间序列
     series = {}
     torso_len = []
+    hand_pose_stat = {'L': {}, 'R': {}}  # 手型分类帧占比（report 用）
     for k in range(len(t)):
         hand = None
         if hands:
@@ -234,6 +299,11 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
         p, tl = frame_params(X[k], Y[k], C[k], conf_thr, hand=hand)
         if tl is not None:
             torso_len.append((t[k], tl))
+        for pid in ('_hand_label_L', '_hand_label_R'):
+            if pid in p:
+                side = pid[-1]
+                hand_pose_stat[side][p[pid]] = hand_pose_stat[side].get(p[pid], 0) + 1
+                del p[pid]
         for pid, v in p.items():
             series.setdefault(pid, []).append((t[k], v))
 
@@ -250,6 +320,14 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
     ranges, _ = AM.load_calib(model, TOOLS)
     canon_series = {}
     for pid, ser in series.items():
+        phys_lookup = pid  # 物理区间查表名（手型路由后参数名会变，物理区间不变）
+        # 手型伸展度路由：模型有连续手型形变参数（如 Hiyori ParamHandL/R）才输出曲线；
+        # 只有开合参数的模型（Haru）该信息已由 HandChange spread 承载，不重复驱动
+        if pid.startswith('ParamHandPose'):
+            routed = pid.replace('ParamHandPose', 'ParamHand')
+            if routed not in ranges:
+                continue
+            pid = routed  # 路由到模型真实手型参数名
         # 曲线 Target 用模型真实参数名（Haru 官方拼写别名）
         pid_model = pid
         if pid not in ranges and ALIAS.get(pid) in ranges:
@@ -258,7 +336,7 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
         ch_cutoff = cal.get('cutoff', 4.0 if pid.startswith('ParamHand') else cutoff)
         ser = lowpass(ser, ch_cutoff)
 
-        phys = PHYS_RANGES.get(pid)
+        phys = PHYS_RANGES.get(phys_lookup)
         if phys:
             # EXT 通道：物理区间 → 模型实测区间（无 calib 文件时用 EXT_RANGES 缺省）
             r = ranges.get(pid_model)
@@ -316,10 +394,19 @@ def bodymap(csv_path, model, out_path, cutoff=8.0, out_fps=30, conf_thr=0.3):
         'Curves': curves,
     }
     write_json(out_path, motion)
+    # 手型分类帧占比 → 语义统计（供剧本/上层系统查询；模型无手型参数也保留）
+    hand_poses = {}
+    for side, stat in hand_pose_stat.items():
+        tot = sum(stat.values())
+        if tot:
+            hand_poses[side] = {k: round(v / tot, 3) for k, v in
+                                sorted(stat.items(), key=lambda x: -x[1])}
+            hand_poses[side]['_frames'] = tot
     report = {'csv': os.path.abspath(csv_path), 'model': model,
               'out': os.path.abspath(out_path),
               'duration_s': round(float(t[-1]), 2), 'frames': len(t),
               'channels': sorted(canon_series.keys()), 'qa': qa,
+              'hand_poses': hand_poses,
               'cutoff_hz': cutoff, 'fps': out_fps}
     return motion, report
 
